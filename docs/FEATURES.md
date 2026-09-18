@@ -363,3 +363,31 @@ without source.** Findings and responses:
   costs ~40 B of file for a plausible `SizeOfImage` via
   `VirtualSize > SizeOfRawData`). Which side wins depends on the scanner class
   in the threat model — decision pending (see open questions).
+
+## Open questions / known-broken (2026-09-17, evidence attached)
+
+1. **Manual-mapper flakiness (BLOCKER for repeatable live tests).** One full
+   green end-to-end run exists (strings decrypted in-host, `ucrtbase!puts`
+   called via export hash, `host_target` inline-hooked, CONTROL FLOW CHANGED).
+   Later runs of the SAME binary fail silently: remote thread exits 1 with no
+   stdout output and no entry-side-channel file (`entry.log`), while the host
+   main thread stops printing at inject time. Merged images additionally fault
+   inside mapped `.text` (WER: 0xC0000005 at base+0x1ECF..0x1F00); padded
+   images never execute their entry. Exports/entry RVA verified correct;
+   thread exit code 1 with zero side effects rules out a crash in our entry.
+   Suspects not yet eliminated: environment state change after repeated
+   APPCRASH/WER cycles, pool-thread scheduling under a redirected-stdout host,
+   or an injector/host interaction not yet instrumented. Next step: reproduce
+   under a kernel debugger or with `NtCreateThreadEx` + explicit stack and
+   per-stage side-channel writes.
+2. **Cross-process SEC_IMAGE mapping denied** (0xC0000022) on this system, so
+   v1 ships MEM_PRIVATE private mapping. Roadmap: APC/self-map from inside the
+   target (shellcode calling NtMapViewOfSection in target context) to obtain
+   MEM_IMAGE without cross-process section mapping.
+3. Section merges (`/MERGE:.pdata=.rdata /MERGE:.rdata=.text`) are green for
+   disk-run images (demo/zero/patscan verified) but crash under the private
+   mapper; disabled for the DLL pending root cause of (1).
+4. Pad-up (`strip.exe <img> 65536`) verified to rewrite `SizeOfImage` and
+   `.data` VirtualSize correctly, but padded images fail under the mapper;
+   disabled for the DLL pending (1). `DllCharacteristics` plausibility
+   (0x8160) is applied unconditionally and is harmless.

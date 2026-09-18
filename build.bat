@@ -40,9 +40,16 @@ if errorlevel 1 exit /b 1
 build\strip.exe build\nocrt-zero.exe
 
 rem The shipped artifact: a zero-import DLL, image-based relocatable.
+rem NOTE: section merges are DISABLED for the DLL: merged images crash under
+rem our private manual mapper (fault inside mapped .text, root cause open -
+rem see FEATURES open questions). Merges stay on for disk-run images only.
 cl %CFL% /DNOCRT_ZERO_IMPORT=1 src\nocrt.cpp tools\testdll\testdll.cpp ^
-   /Febuild\testdll.dll /link %LKF% /DLL /ENTRY:NocrtDllEntry /SUBSYSTEM:WINDOWS /NODEFAULTLIB /FIXED:NO
+   /Febuild\testdll.dll /link /OPT:REF,ICF /DEBUG:NONE /INCREMENTAL:NO /MANIFEST:NO ^
+   /DLL /ENTRY:NocrtDllEntry /SUBSYSTEM:WINDOWS /NODEFAULTLIB /FIXED:NO
 if errorlevel 1 exit /b 1
+rem Pad-up currently DISABLED for the DLL: padded images fail to execute their
+rem entry under the private manual mapper (no output at all; root cause open,
+rem see FEATURES open questions). DllCharacteristics plausibility still applied.
 build\strip.exe build\testdll.dll
 
 rem Dev/test tools (CRT allowed; they never ship inside the target).

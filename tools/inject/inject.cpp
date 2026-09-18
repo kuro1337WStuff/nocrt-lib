@@ -209,6 +209,10 @@ int main(int argc, char** argv) {
     }
     printf("inject: entry %p running (cet_cpu=%lu, image_mapped=%d)\n", (void*)entry_va,
            cfg.cet_cpu_supported, image_mapped ? 1 : 0);
+    WaitForSingleObject(thread, 3000);
+    DWORD tcode = 0;
+    GetExitCodeThread(thread, &tcode);
+    printf("inject: remote thread exit code 0x%08lX\n", tcode);
     CloseHandle(thread);
     CloseHandle(proc);
     free(img);

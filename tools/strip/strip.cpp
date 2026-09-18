@@ -110,6 +110,34 @@ int main(int argc, char** argv) {
         wr32(datadir + 6 * 8 + 4, 0);
     }
 
+    // Plausible DllCharacteristics for a stock VS2022 x64 image: absence of
+    // these is itself a tell, and it costs 0 bytes.
+    {
+        const unsigned short dc = (unsigned short)(0x0020 | 0x0040 | 0x0100 | 0x8000);
+        opt[70] = (unsigned char)(dc & 0xFF);
+        opt[71] = (unsigned char)(dc >> 8);
+    }
+    // Optional pad-up: inflate the last section's VirtualSize so SizeOfImage
+    // reaches a plausible value (VirtualSize > SizeOfRawData zero-fills, so
+    // the file grows by 0 bytes). A 7 KB module is itself anomalous.
+    if (argc > 2) {
+        const unsigned long pad = (unsigned long)strtoul(argv[2], nullptr, 0);
+        if (pad) {
+            const unsigned char* fh = nt + 4;
+            const unsigned short nsec = (unsigned short)(fh[2] | (fh[3] << 8));
+            const unsigned short opt_size = (unsigned short)(fh[16] | (fh[17] << 8));
+            unsigned char* e = (unsigned char*)(opt + opt_size) + (unsigned long)(nsec - 1) * 40;
+            const unsigned long va = rd32(e + 12);
+            const unsigned long rs = rd32(e + 16);
+            const unsigned long new_vs = pad - va;
+            if (nsec && new_vs > rs && pad > rd32(opt + 56)) {
+                wr32(e + 8, new_vs);
+                wr32(opt + 56, pad);
+                printf("strip: padded SizeOfImage to 0x%lX\n", pad);
+            }
+        }
+    }
+
     fseek(f, 0, SEEK_SET);
     fwrite(b, 1, (size_t)size, f);
     fclose(f);

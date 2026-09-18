@@ -47,18 +47,20 @@ struct inline_hook {
     bool active;
 };
 
-inline bool hook_inline(inline_hook& h, unsigned char* target, void* detour) {
+inline bool hook_inline(inline_hook& h, unsigned char* target, void* detour,
+                        nocrt_size stolen_len) {
     const auto vp = virt_protect();
     const auto va = (VirtualAlloc_t)NOCRT_FN("VirtualAlloc");
     const auto vf = (int(__stdcall*)(void*, nocrt_size, unsigned long))NOCRT_FN("VirtualFree");
-    if (!vp || !va) return false;
-    const long long rel = (long long)((unsigned char*)detour - (target + 5));
-    const bool use_rel32 = rel >= -2147483648LL && rel <= 2147483647LL;
-    h.patch_len = use_rel32 ? 5 : 12;
+    if (!vp || !va || stolen_len < 5 || stolen_len > 16) return false;
     h.target = target;
+    h.patch_len = 5;
     h.active = false;
-    // The trampoline's jump-back is a rel32, so it must land within +/-2GB of
-    // the target. Probe hints around the target until one sticks nearby.
+    // Two-stage design: the target gets a 5-byte rel32 into a trampoline
+    // allocated within +/-2GB; the trampoline holds the FULL stolen
+    // instructions (caller-supplied length, verified against a build-time
+    // pattern) plus a 12-byte absolute jump to the possibly-far detour. This
+    // never executes a partial instruction.
     unsigned char* tramp = nullptr;
     unsigned char* page_target = (unsigned char*)((unsigned long long)target & ~0xFFFull);
     for (long long off = -0x70000000LL; off <= 0x70000000LL && !tramp; off += 0x00800000LL) {
@@ -66,8 +68,8 @@ inline bool hook_inline(inline_hook& h, unsigned char* target, void* detour) {
         if ((unsigned long long)hint < 0x10000) continue;
         unsigned char* p = (unsigned char*)va(hint, 64, kMemCommit | kMemReserve, kPageRw);
         if (!p) continue;
-        const long long back_rel = (long long)((target + h.patch_len) - (p + h.patch_len + 5));
-        if (back_rel < -2147483648LL || back_rel > 2147483647LL) {
+        const long long fwd = (long long)(p - (target + 5));
+        if (fwd < -2147483648LL || fwd > 2147483647LL) {
             if (vf) vf(p, 0, 0x8000 /*MEM_RELEASE*/);
             continue;
         }
@@ -75,29 +77,21 @@ inline bool hook_inline(inline_hook& h, unsigned char* target, void* detour) {
     }
     if (!tramp) return false;
     h.trampoline = tramp;
-    for (nocrt_size i = 0; i < h.patch_len; ++i) h.saved[i] = target[i];
-    for (nocrt_size i = 0; i < h.patch_len; ++i) h.trampoline[i] = h.saved[i];
-    unsigned char* back = h.trampoline + h.patch_len;
-    const long long rel2 = (long long)((target + h.patch_len) - (back + 5));
-    if (rel2 < -2147483648LL || rel2 > 2147483647LL) return false;
-    back[0] = 0xE9;
-    const int d2 = (int)rel2;
-    memcpy(back + 1, &d2, 4);
+    for (nocrt_size i = 0; i < 16; ++i) h.saved[i] = target[i];
+    for (nocrt_size i = 0; i < stolen_len; ++i) h.trampoline[i] = h.saved[i];
+    unsigned char* jump = h.trampoline + stolen_len;
+    jump[0] = 0x48;
+    jump[1] = 0xB8;
+    memcpy(jump + 2, &detour, 8);
+    jump[10] = 0xFF;
+    jump[11] = 0xE0;
     unsigned long old = 0;
     vp(h.trampoline, 64, kPageRx, &old);
-    vp(target, h.patch_len, kPageRw, &old);
-    if (use_rel32) {
-        target[0] = 0xE9;
-        const int d = (int)rel;
-        memcpy(target + 1, &d, 4);
-    } else {
-        target[0] = 0x48;
-        target[1] = 0xB8;
-        memcpy(target + 2, &detour, 8);
-        target[10] = 0xFF;
-        target[11] = 0xE0;
-    }
-    vp(target, h.patch_len, old, &old);
+    vp(target, stolen_len, kPageRw, &old);
+    target[0] = 0xE9;
+    const int d = (int)(long long)(tramp - (target + 5));
+    memcpy(target + 1, &d, 4);
+    vp(target, stolen_len, old, &old);
     h.active = true;
     return true;
 }

@@ -74,8 +74,10 @@ static unsigned long __stdcall worker(void*) {
     const unsigned long hsz = nocrt::module_size(host);
     const unsigned char* hit = nocrt::scan(host, hsz, kHostFn);
     if (hit && nocrt::count_matches(host, hsz, kHostFn.b, kHostFn.n) == 1) {
+        // kHostFn matches the full 7-byte imul prologue, so stealing 7 bytes
+        // never splits an instruction.
         nocrt::inline_hook h = {};
-        const bool ok = nocrt::hook_inline(h, (unsigned char*)hit, (void*)&detour_target);
+        const bool ok = nocrt::hook_inline(h, (unsigned char*)hit, (void*)&detour_target, 7);
         nocrt::out("[dbg] hit: ", 10);
         print_hex((unsigned long long)hit);
         nocrt::out(" tramp: ", 8);
@@ -107,6 +109,33 @@ static unsigned long __stdcall worker(void*) {
 
 extern "C" int nocrt_dll_main(nocrt_dword reason) {
     if (reason != kDllProcessAttach) return 1;
+    // Side channel independent of host stdout: proves whether the remote
+    // thread executes at all.
+    {
+        using CreateFileA_t = void*(__stdcall*)(const char*, unsigned long, unsigned long,
+                                                void*, unsigned long, unsigned long, void*);
+        using WriteFile_t = int(__stdcall*)(void*, const void*, unsigned long, unsigned long*,
+                                            void*);
+        auto cf = (CreateFileA_t)NOCRT_FN("CreateFileA");
+        auto wf = (WriteFile_t)NOCRT_FN("WriteFile");
+        if (cf && wf) {
+            void* hf = cf("C:\\Users\\Loki\\nocrt\\build\\entry.log", 0x40000000, 0, nullptr, 2,
+                          0, nullptr);
+            if (hf != (void*)-1) {
+                unsigned long w = 0;
+                wf(hf, "entry-ran\n", 10, &w, nullptr);
+                auto ch = (int(__stdcall*)(void*))NOCRT_FN("CloseHandle");
+                if (ch) ch(hf);
+            }
+        }
+    }
+    void* tpc = NOCRT_FN("TrySubmitThreadpoolCallback");
+    void* ct = NOCRT_FN("CreateThread");
+    nocrt::out("[dbg] tpc: ", 10);
+    print_hex((unsigned long long)tpc);
+    nocrt::out(" ct: ", 6);
+    print_hex((unsigned long long)ct);
+    nocrt::out("\r\n", 2);
     void* thread = nullptr;
     if (!nocrt::spawn(&worker, nullptr, &thread)) return 0;
     return 1;
