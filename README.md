@@ -68,10 +68,9 @@ hidden in a namespace.
 
 ## Roadmap
 
-- string formatting without `<cstdio>`
-- heap allocation without the CRT allocator
-- direct syscall layer for imports beyond kernel32
-- position-independent build mode
+The living feature list, design notes, and verification log live in
+[`docs/FEATURES.md`](docs/FEATURES.md). Headline capability today:
+compile-time polymorphic XOR strings (`NOCRT_XSTR` / `nocrt::xdec`).
 
 ## Non-goals
 

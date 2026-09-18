@@ -1,4 +1,17 @@
 #include "nocrt/nocrt.h"
+#include "nocrt/xstr.h"
+
+// Same literal at two expansion sites: compile-time polymorphic encryption
+// must yield different ciphertext for each.
+constexpr auto kWordA = NOCRT_XSTR("polymorphic");
+constexpr auto kWordB = NOCRT_XSTR("polymorphic");
+
+static void print_hex(unsigned long long v) {
+    const char digits[] = "0123456789abcdef";
+    char buf[16];
+    for (int i = 0; i < 16; ++i) buf[i] = digits[(v >> ((15 - i) * 4)) & 0xF];
+    nocrt::out(buf, 16);
+}
 
 extern "C" int nocrt_main() {
     const char banner[] = "nocrt: alive - no CRT linked\r\n";
@@ -12,11 +25,36 @@ extern "C" int nocrt_main() {
     const char* probe = "freestanding";
     char copy[16];
     memcpy(copy, probe, strlen(probe) + 1);
-    if (strcmp(copy, "freestanding") == 0 && strncmp(copy, "free", 4) == 0 &&
-        memcmp(copy, probe, 12) == 0 && memmove(copy + 1, copy, 12) != nullptr) {
-        nocrt::out("ok\r\n", 4);
-        return 0;
+    if (!(strcmp(copy, "freestanding") == 0 && strncmp(copy, "free", 4) == 0 &&
+          memcmp(copy, probe, 12) == 0 && memmove(copy + 1, copy, 12) != nullptr)) {
+        nocrt::err("self-test failed\r\n", 18);
+        return 1;
     }
-    nocrt::err("self-test failed\r\n", 18);
-    return 1;
+    nocrt::out("ok\r\n", 4);
+
+    nocrt::out("xstr cipher A fnv1a: ", 21);
+    print_hex(nocrt::fnv1a(kWordA.data, kWordA.size()));
+    nocrt::out("\r\n", 2);
+    nocrt::out("xstr cipher B fnv1a: ", 21);
+    print_hex(nocrt::fnv1a(kWordB.data, kWordB.size()));
+    nocrt::out("\r\n", 2);
+
+    if (nocrt::fnv1a(kWordA.data, kWordA.size()) == nocrt::fnv1a(kWordB.data, kWordB.size())) {
+        nocrt::err("xstr not polymorphic\r\n", 22);
+        return 1;
+    }
+
+    {
+        nocrt::xdec da(kWordA);
+        nocrt::xdec db(kWordB);
+        if (strcmp(da.c_str(), db.c_str()) != 0 || strlen(da.c_str()) != 11) {
+            nocrt::err("xstr decrypt failed\r\n", 21);
+            return 1;
+        }
+        nocrt::out("xstr decrypt: ", 14);
+        nocrt::out(da.c_str());
+        nocrt::out("\r\n", 2);
+    }
+
+    return 0;
 }
