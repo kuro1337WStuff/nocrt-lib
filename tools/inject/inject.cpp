@@ -38,25 +38,34 @@ struct nocrt_config_wire {
 
 int main(int argc, char** argv) {
     if (argc < 3) {
-        printf("usage: inject.exe <pid> <dll-path>\n");
+        printf("usage: inject.exe <pid> <dll-path> [--dump-log]\n");
         return 2;
     }
+    const bool dump_log = (argc > 3 && strcmp(argv[3], "--dump-log") == 0);
     const DWORD pid = (DWORD)atoi(argv[1]);
     HANDLE proc = OpenProcess(PROCESS_ALL_ACCESS, FALSE, pid);
     if (!proc) {
         printf("inject: OpenProcess failed %lu\n", GetLastError());
-        return 2;
+        return 10;
     }
     HANDLE file = CreateFileA(argv[2], GENERIC_READ | GENERIC_EXECUTE, FILE_SHARE_READ, nullptr,
                               OPEN_EXISTING, 0, nullptr);
     if (file == INVALID_HANDLE_VALUE) {
         printf("inject: cannot open dll\n");
-        return 2;
+        return 11;
     }
     const DWORD fsize = GetFileSize(file, nullptr);
     unsigned char* img = (unsigned char*)malloc(fsize);
+    if (!img) {
+        printf("inject: out of memory\n");
+        return 11;
+    }
     DWORD got = 0;
-    ReadFile(file, img, fsize, &got, nullptr);
+    if (!ReadFile(file, img, fsize, &got, nullptr) || got != fsize) {
+        // A short read would map uninitialized heap into the target .text.
+        printf("inject: SHORT READ got=%lu wanted=%lu\n", got, fsize);
+        return 11;
+    }
 
     const unsigned char* nt = img + rd32(img + 0x3C);
     const unsigned char* opt = nt + 24;
@@ -72,22 +81,38 @@ int main(int argc, char** argv) {
         for (unsigned short i = 0; i < nsec; ++i) {
             const unsigned char* e = sec + (unsigned long)i * 40;
             const unsigned long va = rd32(e + 12);
+            const unsigned long vs = rd32(e + 8);
             const unsigned long rs = rd32(e + 16);
             const unsigned long rp = rd32(e + 20);
-            if (rva >= va && rva < va + rs) return rp + (rva - va);
+            if (rva >= va && rva < va + vs) {
+                const unsigned long delta = rva - va;
+                if (delta < rs && rp + delta < fsize) return rp + delta;
+                return 0xFFFFFFFFu;  // virtual padding: no file bytes, never lie
+            }
         }
-        return rva;
+        return 0xFFFFFFFFu;  // rva in no section: never lie
     };
 
     // Locate the manual entry export by name.
-    const unsigned char* exp = img + off_of(rd32(datadir));
+    const unsigned long exp_off = off_of(rd32(datadir));
+    if (exp_off == 0xFFFFFFFFu) {
+        printf("inject: export directory rva unresolvable in file\n");
+        return 12;
+    }
+    const unsigned char* exp = img + exp_off;
     const unsigned long num_names = rd32(exp + 24);
     const unsigned long names_off = off_of(rd32(exp + 32));
     const unsigned long ords_off = off_of(rd32(exp + 36));
     const unsigned long funcs_off = off_of(rd32(exp + 28));
+    if (names_off == 0xFFFFFFFFu || ords_off == 0xFFFFFFFFu || funcs_off == 0xFFFFFFFFu) {
+        printf("inject: export tables unresolvable in file\n");
+        return 12;
+    }
     unsigned long manual_rva = 0;
     for (unsigned long i = 0; i < num_names; ++i) {
-        const char* name = (const char*)(img + off_of(rd32(img + names_off + i * 4)));
+        const unsigned long no = off_of(rd32(img + names_off + i * 4));
+        if (no == 0xFFFFFFFFu) continue;
+        const char* name = (const char*)(img + no);
         if (strcmp(name, "NocrtManualEntry") == 0) {
             const unsigned short ord = rd16(img + ords_off + i * 2);
             manual_rva = rd32(img + funcs_off + (unsigned long)ord * 4);
@@ -96,7 +121,7 @@ int main(int argc, char** argv) {
     }
     if (!manual_rva) {
         printf("inject: NocrtManualEntry export not found\n");
-        return 2;
+        return 13;
     }
 
     void* base = nullptr;
@@ -197,7 +222,7 @@ int main(int argc, char** argv) {
                                       PAGE_READWRITE);
     if (!cfg_remote || !WriteProcessMemory(proc, cfg_remote, &cfg, sizeof(cfg), nullptr)) {
         printf("inject: config write failed\n");
-        return 2;
+        return 21;
     }
 
     const unsigned long long entry_va = (unsigned long long)base + manual_rva;
@@ -205,16 +230,57 @@ int main(int argc, char** argv) {
                                        cfg_remote, 0, nullptr);
     if (!thread) {
         printf("inject: CreateRemoteThread failed %lu\n", GetLastError());
-        return 2;
+        return 30;
     }
     printf("inject: entry %p running (cet_cpu=%lu, image_mapped=%d)\n", (void*)entry_va,
            cfg.cet_cpu_supported, image_mapped ? 1 : 0);
     WaitForSingleObject(thread, 3000);
     DWORD tcode = 0;
     GetExitCodeThread(thread, &tcode);
-    printf("inject: remote thread exit code 0x%08lX\n", tcode);
+    if (tcode == STILL_ACTIVE) {
+        printf("inject: remote thread STILL RUNNING after wait (not an exit code)\n");
+    } else {
+        printf("inject: remote thread exit code 0x%08lX\n", tcode);
+    }
+
+    if (dump_log) {
+        // Read the whole mapped image back and scan for the trace ring magic.
+        unsigned char* local = (unsigned char*)malloc(size_of_image);
+        if (local && ReadProcessMemory(proc, base, local, size_of_image, nullptr)) {
+            long long ring = -1;
+            for (unsigned long o = 0; o + 8 <= size_of_image; o += 8) {
+                if (*(unsigned long long*)(local + o) == 0x304352545452434Ell) {
+                    ring = o;
+                    break;
+                }
+            }
+            if (ring < 0) {
+                printf("dump-log: no trace ring magic in mapped image (mapper never landed "
+                       "it, or image_base wrong)\n");
+            } else {
+                const unsigned long head = *(unsigned long*)(local + ring + 24);
+                const unsigned long cap = (unsigned long)*(unsigned long long*)(local + ring + 16);
+                printf("dump-log: ring at base+0x%llX head=%lu cap=%lu\n", ring, head, cap);
+                const unsigned long n = head < cap ? head : cap;
+                for (unsigned long i = 0; i < n; ++i) {
+                    const unsigned char* r = local + ring + 56 + (long long)i * 32;
+                    printf("  rec%02lu site=%08lX code=%lu arg=%lu aux=%llX\n", i,
+                           *(unsigned long*)(r + 12), *(unsigned long*)(r + 16),
+                           *(unsigned long*)(r + 20), *(unsigned long long*)(r + 24));
+                }
+                if (n == 0) printf("  (ring present but empty: init ran, died before first "
+                                   "record)\n");
+            }
+        } else {
+            printf("dump-log: ReadProcessMemory of image failed\n");
+        }
+        free(local);
+    }
+
     CloseHandle(thread);
     CloseHandle(proc);
     free(img);
+    if (tcode == STILL_ACTIVE) return 31;
+    if (tcode != 0) return 40;
     return 0;
 }

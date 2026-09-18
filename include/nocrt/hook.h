@@ -26,6 +26,7 @@ struct nocrt_hook {
     unsigned char* target;
     unsigned char* slot;
     unsigned char saved[16];
+    unsigned char expect[8];  // our exact patch bytes, for sound verification
     nocrt_size stolen;
     bool active;
     void* unwind_table;
@@ -113,7 +114,7 @@ inline void resume_all(void** handles, nocrt_size n) {
 inline void fixup_threads(void** handles, nocrt_size n, unsigned char* target,
                           unsigned char* slot) {
     const auto gc = (GetCtx_t)NOCRT_FN("GetThreadContext");
-    const auto sc = (SetCtx_t)NOCRT_FN("SetThreadContext");
+    const auto sc = (SetCtx_t)NOCRT_FN_RAW("SetThreadContext");
     if (!gc || !sc) return;
     unsigned char ctx[0x4D0 + 16] = {};
     *(unsigned long*)(ctx + 0x30) = 0x00100000 | 0x00000001 | 0x00000002 | 0x00000008;
@@ -195,7 +196,7 @@ inline bool hook_install(nocrt_hook& h, unsigned char* target, void* detour) {
     hook_detail::g_region_used += kHookSlotSize;
 
     const bool was_rx = hook_detail::g_region_rx;
-    const auto vp = (hook_detail::VirtualProtect_t)NOCRT_FN("VirtualProtect");
+    const auto vp = (hook_detail::VirtualProtect_t)NOCRT_FN_RAW("VirtualProtect");
     unsigned long old = 0;
     if (was_rx && vp) vp(region, kHookRegionSize, 0x04, &old);
 
@@ -233,6 +234,8 @@ inline bool hook_install(nocrt_hook& h, unsigned char* target, void* detour) {
     target[0] = 0xE9;
     const int d = (int)(long long)(slot - (target + 5));
     memcpy(target + 1, &d, 4);
+    h.expect[0] = 0xE9;
+    memcpy(h.expect + 1, &d, 4);
     if (vp) vp(target, pr.stolen, old, &old);
     hook_detail::fixup_threads(threads, nt, target, slot);
     hook_detail::resume_all(threads, nt);
@@ -245,9 +248,19 @@ inline bool hook_install(nocrt_hook& h, unsigned char* target, void* detour) {
     return true;
 }
 
+// Sound verification: exact patch bytes, not "starts with E9". A foreign
+// re-hook or a repointed displacement fails this.
+inline bool hook_verify(const nocrt_hook& h) {
+    if (!h.active) return false;
+    for (nocrt_size i = 0; i < 5; ++i) {
+        if (h.target[i] != h.expect[i]) return false;
+    }
+    return true;
+}
+
 inline bool hook_remove(nocrt_hook& h) {
     if (!h.active) return false;
-    const auto vp = (hook_detail::VirtualProtect_t)NOCRT_FN("VirtualProtect");
+    const auto vp = (hook_detail::VirtualProtect_t)NOCRT_FN_RAW("VirtualProtect");
     unsigned long old = 0;
     void* threads[64];
     const nocrt_size nt = hook_detail::suspend_others(threads, 64);

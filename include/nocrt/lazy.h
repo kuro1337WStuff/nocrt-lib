@@ -166,10 +166,34 @@ inline unsigned long module_size(const unsigned char* base) {
     return rd32(opt + 56);
 }
 
+// Compile-time hygiene denylist: APIs that write, protect, or context-manage
+// foreign memory must only be reached through sanctioned wrappers. Canonical
+// seed-0 hashes fold at compile time; the static_assert and the whole list
+// vanish from the image (0 bytes).
+constexpr bool api_denied(unsigned long long h) {
+    return h == str_hash("VirtualProtect", 0) || h == str_hash("VirtualProtectEx", 0) ||
+           h == str_hash("NtProtectVirtualMemory", 0) ||
+           h == str_hash("WriteProcessMemory", 0) || h == str_hash("NtWriteVirtualMemory", 0) ||
+           h == str_hash("SetThreadContext", 0) || h == str_hash("NtSetContextThread", 0);
+}
+
+template <unsigned long long Hc, unsigned long long H, unsigned long long Seed>
+inline void* lazy_fn_checked() {
+    static_assert(!api_denied(Hc),
+                  "NOCRT_FN: denied by hygiene policy (writes/protection/context on foreign "
+                  "memory). Use NOCRT_FN_RAW inside a sanctioned wrapper.");
+    return lazy_fn<H, Seed>();
+}
+
 } // namespace nocrt
 
 // Per-expansion-site seeded lookup. The seed is line-derived so identical
 // literals at different sites produce different immediates in the image.
 #define NOCRT_FN(lit)                                                                          \
+    ::nocrt::lazy_fn_checked<::nocrt::str_hash(lit, 0),                                        \
+                             ::nocrt::str_hash(lit, ::nocrt::line_seed(__LINE__)),             \
+                             ::nocrt::line_seed(__LINE__)>()
+// Escape hatch for the library's own sanctioned wrappers only.
+#define NOCRT_FN_RAW(lit)                                                                      \
     ::nocrt::lazy_fn<::nocrt::str_hash(lit, ::nocrt::line_seed(__LINE__)),                     \
                      ::nocrt::line_seed(__LINE__)>()

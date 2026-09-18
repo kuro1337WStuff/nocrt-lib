@@ -78,15 +78,18 @@ bool g_api_ready = false;
 api_table make_api() {
     api_table t = {};
 #if NOCRT_ZERO_IMPORT
+    // Hashes fold at compile time: a runtime str_hash over a literal would
+    // materialize the API names in .rdata (a measured leak in an earlier
+    // build, and a stronger lazy-importer signature than importing them).
     constexpr unsigned long long seed = 0xA5A5C3C35A5A3C3Cull;
-    t.get_std_handle = (decltype(t.get_std_handle))lazy_resolve(
-        str_hash("GetStdHandle", seed), seed);
-    t.write_file = (decltype(t.write_file))lazy_resolve(
-        str_hash("WriteFile", seed), seed);
-    t.exit_process = (decltype(t.exit_process))lazy_resolve(
-        str_hash("ExitProcess", seed), seed);
-    t.get_command_line_a = (decltype(t.get_command_line_a))lazy_resolve(
-        str_hash("GetCommandLineA", seed), seed);
+    constexpr unsigned long long h_gsh = str_hash("GetStdHandle", seed);
+    constexpr unsigned long long h_wf = str_hash("WriteFile", seed);
+    constexpr unsigned long long h_ep = str_hash("ExitProcess", seed);
+    constexpr unsigned long long h_cl = str_hash("GetCommandLineA", seed);
+    t.get_std_handle = (decltype(t.get_std_handle))lazy_resolve(h_gsh, seed);
+    t.write_file = (decltype(t.write_file))lazy_resolve(h_wf, seed);
+    t.exit_process = (decltype(t.exit_process))lazy_resolve(h_ep, seed);
+    t.get_command_line_a = (decltype(t.get_command_line_a))lazy_resolve(h_cl, seed);
 #else
     t.get_std_handle = GetStdHandle;
     t.write_file = WriteFile;

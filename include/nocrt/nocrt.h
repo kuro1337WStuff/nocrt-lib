@@ -109,6 +109,13 @@ inline bool out(const char* data, nocrt_size n) {
 
 inline bool out(const char* data) { return out(data, strlen(data)); }
 
+// sizeof-folded literal emit: kills hand-counted length literals as a bug
+// class (seven wrong call sites were corrupting committed logs).
+template <nocrt_size N>
+inline bool say(const char (&s)[N]) {
+    return out(s, N - 1);
+}
+
 inline bool err(const char* data, nocrt_size n) {
     return write(api().get_std_handle(NOCRT_STD_ERROR_HANDLE), data, n);
 }

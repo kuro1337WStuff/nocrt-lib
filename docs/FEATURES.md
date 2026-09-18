@@ -451,38 +451,73 @@ Shipped this fold-in:
       (no production use found - folklore, but structurally fatal to
       unwind-metadata spoofing).
 
-## Open questions / known-broken (2026-09-17, evidence attached)
+## Research fold-in 7 — tool-user design agents (2026-09-18)
 
-1. **Manual-mapper flakiness (BLOCKER for repeatable live tests).** One full
-   green end-to-end run exists (strings decrypted in-host, `ucrtbase!puts`
-   called via export hash, `host_target` inline-hooked, CONTROL FLOW CHANGED).
-   Later runs of the SAME binary fail silently: remote thread exits 1 with no
-   stdout output and no entry-side-channel file (`entry.log`), while the host
-   main thread stops printing at inject time. Merged images additionally fault
-   inside mapped `.text` (WER: 0xC0000005 at base+0x1ECF..0x1F00); padded
-   images never execute their entry. Exports/entry RVA verified correct;
-   thread exit code 1 with zero side effects rules out a crash in our entry.
-   Suspects not yet eliminated: environment state change after repeated
-   APPCRASH/WER cycles, pool-thread scheduling under a redirected-stdout host,
-   or an injector/host interaction not yet instrumented. Next step: reproduce
-   under a kernel debugger or with `NtCreateThreadEx` + explicit stack and
-   per-stage side-channel writes.
-2. **Cross-process SEC_IMAGE mapping denied** (0xC0000022) on this system, so
-   v1 ships MEM_PRIVATE private mapping. Roadmap: APC/self-map from inside the
-   target (shellcode calling NtMapViewOfSection in target context) to obtain
-   MEM_IMAGE without cross-process section mapping.
-3. Section merges (`/MERGE:.pdata=.rdata /MERGE:.rdata=.text`) are green for
-   disk-run images (demo/zero/patscan verified) but crash under the private
-   mapper; disabled for the DLL pending root cause of (1).
-4. Pad-up (`strip.exe <img> 65536`) verified to rewrite `SizeOfImage` and
-   `.data` VirtualSize correctly, but padded images fail under the mapper;
-   disabled for the DLL pending (1). `DllCharacteristics` plausibility
-   (0x8160) is applied unconditionally and is harmless.
-5. **Loader-mode kickoff crash (2026-09-18).** With the no-op DllMain fix,
-   `LoadLibrary` succeeds and the exported kickoff runs; the entry side-channel
-   file is written (`entry-ran`), but no stdout output appears and the process
-   then dies (0xC0000005). Narrowed to: stdout path (`nocrt::out` -> api())
-   silent in loader mode while raw CreateFileA/WriteFile works, then a fault
-   after the side-channel block. Suspects: api()/GetStdHandle interaction under
-   a redirected-stdout host, or the hook_install path in loader context.
-   Next: per-stage side-channel writes around each out()/spawn/hook step.
+Three design agents (hook API surface, anti-detection helpers, DX/observability)
+audited the tree and found live defects; Phase 1 of their recommendations is
+shipped:
+
+- [x] **In-image trace ring** (`trace.h`): fixed `.bss` ring, pure stores, no
+      syscalls/handles/stdout; injector `--dump-log` reads it back via
+      ReadProcessMemory and scans the magic. This is what made the silent
+      failures answerable: ring records name the exact stage.
+- [x] **Injector defects fixed**: unchecked `ReadFile` (a short read mapped
+      uninitialized heap into target `.text` — a sufficient explanation for the
+      earlier 0xC0000005-at-base+0x1ECF nondeterminism); `off_of()` lying on
+      RVAs in virtual padding (exactly what pad-up creates — credible cause of
+      the pad/merge crashes); `STILL_ACTIVE` printed as an exit code; eight
+      `return 2` paths collapsed into distinct codes (10 open, 11 read, 12 PE,
+      13 export, 21 write, 30 thread, 31 timeout, 40 remote-exit).
+- [x] **Plaintext API-name leak fixed**: `make_api()` folded its name hashes at
+      compile time; an earlier build shipped `WriteFile`/`ExitProcess`/... as
+      ASCII in `.rdata` of a zero-import image (a stronger lazy-importer
+      signature than importing them), while M3 reported clean because it only
+      grepped CRT names.
+- [x] **`say()` sizeof-folded literal emit**: kills hand-counted length
+      literals as a bug class (seven wrong call sites were corrupting committed
+      logs, visibly: dropped spaces and stray NULs).
+- [x] **Compile-time API denylist** in `NOCRT_FN` (static_assert over canonical
+      seed-0 hashes: VirtualProtect/Ex, NtProtectVirtualMemory,
+      WriteProcessMemory, NtWriteVirtualMemory, SetThreadContext,
+      NtSetContextThread) with `NOCRT_FN_RAW` escape hatch for the library's
+      own sanctioned wrappers (hook engine, wipe_headers). 0 shipped bytes.
+- [x] **Sound `hook_verify`**: compares exact patch bytes (`expect[8]`), not
+      "starts with E9"; a foreign re-hook or repointed displacement now fails.
+- [x] **Exit-code convention**: thread exit 0 = success end to end.
+- [x] **Both delivery paths repeatable**: manual map 2/2 green
+      (`inject_exit=0`, CONTROL FLOW CHANGED x4 each), loader mode green
+      (LoadLibrary + exported kickoff; strings, host-CRT call, hook redirect).
+- DEFERRED per research: HWBP/guard modes (removed from hook.h v2; HWBP returns
+      in v2 paired with DR-spoofing), full hook record table, transactions,
+      foreign-hook chaining, coverage ledger, env preflight mask, VEH audit,
+      siggen/nocrt-run/metrics-schema tooling.
+
+### Resolved open questions
+
+- #1 manual-map flakiness: RESOLVED — compounding defects (short read, lying
+  RVA translation, loader-lock work in DllMain, success-code confusion), now
+  fixed and instrumented; repeatable 2/2 plus loader-mode green.
+- #5 loader-mode kickoff crash: RESOLVED — DllMain is a no-op (work under the
+  loader lock crashed LoadLibrary); consumers kick off post-load.
+
+### New open question
+
+- Worker-stage trace records (codes 5-9) are absent from the ring even though
+  the worker's stdout output appears (ring head stays 4). Entry-stage records
+  land correctly. Suspects: torn/volatile `head` interaction across threads or
+  a pool-thread visibility issue. Diagnostic gap only; does not affect the
+  verified end-to-end behavior.
+
+## Open questions / known-broken (updated 2026-09-18)
+
+1. RESOLVED (see fold-in 7): manual-map flakiness and loader-mode crash.
+2. **Cross-process SEC_IMAGE mapping denied** (0xC0000022) system-wide on this
+   lab box, in-process too (cowtest). Image-backed trampolines/self-map
+   unavailable here; v1 stays MEM_PRIVATE. Roadmap: APC self-map from inside
+   the target.
+3. Section merges green for disk-run images but not re-tested under the mapper
+   since the D2 fix; re-enable per-image once `nocrt-run`-style repeatability
+   exists.
+4. Pad-up verified to rewrite headers correctly; not re-tested under the
+   mapper since the D2 fix (its credible failure cause). Disabled for the DLL
+   until re-tested.

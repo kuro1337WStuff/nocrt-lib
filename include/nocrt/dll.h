@@ -29,5 +29,5 @@ extern "C" __declspec(dllexport) int __stdcall NocrtDllEntry(void* hinst, nocrt_
 
 extern "C" __declspec(dllexport) unsigned long __stdcall NocrtManualEntry(void* config) {
     nocrt::g_config = (nocrt::nocrt_config*)config;
-    return nocrt_dll_main(kDllProcessAttach) ? 1ul : 0ul;
+    return (unsigned long)nocrt_dll_main(kDllProcessAttach);
 }
