@@ -216,3 +216,51 @@ fixups because none exist.
   (`cet_cpu=0`); policy is still queried per process by the injector. If
   shadow stacks are active, return-address spoofing would fault — spoofing
   paths stay gated on that policy.
+
+## Research fold-in 1 — detection vectors (2026-09-17)
+
+Independent research agent ranked the vectors that actually catch a
+manually-mapped, zero-import DLL. Corrections to earlier design notes are
+marked CORRECTED; new constraints are ADOPTED.
+
+Ranked (highest risk first): (1) MEM_PRIVATE executable memory / unbacked
+image; (2) in-memory PE-header scan of unrecognized regions (zero imports is
+itself an anomaly); (3) module-list vs VAD cross-check both directions;
+(4) thread start address outside known modules; (5) target `.text` integrity
+checksumming; (6) working-set / SharedOriginal check (defeats "I patched a
+real DLL so VirtualQuery says MEM_IMAGE"); (7) protection / region-state
+flags; (8) RDTSC timing deltas; (9) PEB debug flags; (10) ThreadHideFromDebugger;
+(11) VEH handler-chain enumeration; (12) injector handle enumeration;
+(13) ETW provider state; (14) CPUID hypervisor bit.
+
+- CORRECTED: header wiping is NOT recommended by default (see `map.h`
+  policy comment). A sanitized header reads as hollowing evidence to
+  PE-sieve/Moneta-class scanners and breaks unwinding unless
+  `RtlAddFunctionTable` runs first. Prefer image-backed mapping with a real,
+  plausible header.
+- CORRECTED: zero imports is a *self-containedness* property (the project's
+  actual goal), not primarily a stealth property — an empty import directory
+  is itself anomalous to header scanners. Metrics M1/M2 still track it.
+- CORRECTED: Ldr-unlinking is folklore and near-useless (VAD and
+  MemorySectionName survive it); being in the module list is only safe when
+  combined with image-backing. Phantom-DLL-hijack-shaped loading beats module
+  stomping (stomping guarantees a file-vs-memory mismatch).
+- ADOPTED: never write to a byte we don't own — no inline hooks in the target,
+  no IAT patches, no VirtualProtect/guard on image pages. This is what kills
+  vectors 5/6/7 at zero bytes; zero-write hooks (HWBP+VEH, guard+VEH) are the
+  observation path.
+- ADOPTED: HWBP stealth is paid for in DR visibility, VEH-chain visibility
+  (handler address in unbacked memory points straight at us), and timing
+  visibility. Public sources understate this trade; ours is now documented.
+- ADOPTED: don't create threads where avoidable (thread pool / APC). Residual
+  measured in our live test: pool callback pointer lives in our memory, so a
+  walk shows `TppWorkerThread -> unbacked frame` — exactly the 1 unbacked
+  frame M9 reports.
+- ROADMAP: direct syscalls instead of hooking ntdll (~500-900B stub gen + SSN
+  resolution); mapper-supplied resolved-API table so the DLL need not walk the
+  PEB at all (the PEB walk byte pattern is heavily signatured); injector-side
+  mitigation-policy query (ACG/CIG) before choosing a mapping strategy.
+- VERIFY EMPIRICALLY before committing architecture: (a) whether
+  NtSetContextThread leaves Win32StartAddress unchanged on this build;
+  (b) DR-breakpoint behavior on a thread that called ThreadHideFromDebugger
+  (reported outcomes range from "VEH still fires" to infinite #DB loop).

