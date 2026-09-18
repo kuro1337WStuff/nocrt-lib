@@ -8,6 +8,12 @@ cl /nologo /O2 /W4 /Oi- /GS- /EHs-c- /GR- /std:c++latest /Iinclude ^
    src\nocrt.cpp src\entry.cpp src\demo.cpp ^
    /Febuild\nocrt-demo.exe /link /ENTRY:nocrt_entry /SUBSYSTEM:CONSOLE /NODEFAULTLIB kernel32.lib
 if errorlevel 1 exit /b 1
+cl /nologo /O2 /W4 /Oi- /GS- /EHs-c- /GR- /std:c++latest /Iinclude ^
+   src\nocrt.cpp src\entry.cpp tools\patscan\patscan.cpp ^
+   /Febuild\patscan.exe /link /ENTRY:nocrt_entry /SUBSYSTEM:CONSOLE /NODEFAULTLIB kernel32.lib
+if errorlevel 1 exit /b 1
 echo.
 echo === import table (must show KERNEL32 only) ===
 dumpbin /imports build\nocrt-demo.exe | findstr /i /c:".dll"
+echo === patscan imports ===
+dumpbin /imports build\patscan.exe | findstr /i /c:".dll"

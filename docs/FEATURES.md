@@ -17,6 +17,17 @@ and gotchas go in the notes so the vision survives across sessions.
       the literal during compilation; `nocrt::xdec` decrypts at runtime into a
       stack buffer zeroed on scope exit. See "The string story" below.
 - [x] **FNV-1a hash** — `nocrt::fnv1a`, constexpr.
+- [x] **Runtime pattern scanning** — IDA-style patterns parsed at compile time
+      (`nocrt::pattern`), wildcard scan + match counting over any memory range,
+      and a `rel32` RIP-relative resolver.
+- [x] **CRT-free PE mapping** — `nocrt::mapped_pe`: read-only file map, DOS/NT
+      header + section-table parse, file-offset → RVA → VA translation.
+- [x] **Command line without CRT** — `nocrt::cmdline()` / `nocrt::arg(n, ...)`
+      over raw `GetCommandLineA`, with quote handling.
+- [x] **Companion harness `tools/patscan`** — grabs patterns and addresses out
+      of a parent binary using only the library: scan a known pattern →
+      file-off/RVA/VA, generate a signature at that address, verify uniqueness,
+      re-scan to confirm the round trip.
 
 ## The string story (headline feature)
 
@@ -113,3 +124,7 @@ standard library, with no CRT linked. Candidate pieces, grouped:
 - 2026-09-18: build OK; imports `KERNEL32.dll` only; demo self-tests pass;
   xstr ciphertext differs per site; plaintext `polymorphic` absent from exe;
   naive literal `freestanding` present (documents the opt-in gotcha).
+- 2026-09-18: `patscan` round-trip PASS against `nocrt-demo.exe` as parent —
+  banner pattern hit file-off `0x1258` / rva `0x2058` / va `0x140002058`;
+  generated 16-byte signature unique (occurrences 1); re-scan resolved to the
+  same address. Both images import `KERNEL32.dll` only.

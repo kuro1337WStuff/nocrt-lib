@@ -16,6 +16,7 @@ __declspec(dllimport) nocrt_dword __stdcall WriteFile(nocrt_handle file, const v
                                                       nocrt_dword to_write, nocrt_dword* written,
                                                       void* overlapped);
 __declspec(dllimport) void __stdcall ExitProcess(nocrt_dword code);
+__declspec(dllimport) char* __stdcall GetCommandLineA();
 }
 
 #define NOCRT_STD_OUTPUT_HANDLE ((nocrt_dword)-11)
@@ -51,6 +52,35 @@ inline bool err(const char* data, nocrt_size n) {
 }
 
 inline bool err(const char* data) { return err(data, strlen(data)); }
+
+// Command line without CRT startup: read the raw process command line.
+inline const char* cmdline() { return GetCommandLineA(); }
+
+// Copies the n-th whitespace-separated token (0 = image path) into out.
+// Quoted tokens are unwrapped. Returns the copied length, 0 if absent.
+inline nocrt_size arg(nocrt_size n, char* out, nocrt_size cap) {
+    if (cap) out[0] = 0;
+    const char* p = cmdline();
+    nocrt_size idx = 0;
+    while (*p) {
+        while (*p == ' ' || *p == '\t') ++p;
+        if (!*p) break;
+        char quote = 0;
+        if (*p == '"') { quote = '"'; ++p; }
+        const char* start = p;
+        while (*p && (quote ? *p != quote : (*p != ' ' && *p != '\t'))) ++p;
+        const nocrt_size len = (nocrt_size)(p - start);
+        if (quote && *p == '"') ++p;
+        if (idx == n) {
+            const nocrt_size c = len < cap - 1 ? len : cap - 1;
+            for (nocrt_size i = 0; i < c; ++i) out[i] = start[i];
+            out[c] = 0;
+            return c;
+        }
+        ++idx;
+    }
+    return 0;
+}
 
 } // namespace nocrt
 
