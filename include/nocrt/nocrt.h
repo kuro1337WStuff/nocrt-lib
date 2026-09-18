@@ -58,6 +58,13 @@ constexpr unsigned long long xmix(unsigned long long s) {
     return s;
 }
 
+// Per-expansion-site seed from __LINE__; shared by lazy.h and secstr.h so
+// identical literals at different sites bake different immediates.
+constexpr unsigned long long kLineSalt = 0x9E3779B97F4A7C15ull;
+constexpr unsigned long long line_seed(unsigned long long line) {
+    return xmix(line * 0x1000003B9ull ^ kLineSalt);
+}
+
 // Every Win32 call goes through this table. In the default build it is filled
 // from the static kernel32 imports; with NOCRT_ZERO_IMPORT=1 it is filled by
 // lazy PEB/export resolution, so the image carries no import table at all.

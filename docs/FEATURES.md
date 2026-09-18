@@ -146,3 +146,73 @@ standard library, with no CRT linked. Candidate pieces, grouped:
   kernel32-minimal demo (GetStdHandle/WriteFile/ExitProcess/GetCommandLineA
   all resolved via the PEB walk). `patscan` PASS against the zero-import image
   (hit rva `0x3078`).
+
+## v1 stealth + harness (shipped 2026-09-17)
+
+- [x] **Hardened strings `secstr`** — per-string distinct decrypt CODE: 6 ops
+      ^ 5 steps = 7776 operation programs seeded per expansion site;
+      `NOCRT_SECSTR` + scoped `secview`. Demo proves distinct ciphertext AND
+      distinct 32-byte code hashes per site; plaintext absent from images.
+- [x] **Host-CRT reachability `hostcrt.h`** — locate host CRT modules by UTF-16
+      name hash in the PEB, resolve exports by hash, call them with decrypted
+      strings. `patscan --crt` cross-checks export-hash vs pattern-scan on real
+      CRT images (ucrtbase!puts, msvcrt!printf PASS).
+- [x] **Image-backed mapping `map.h`** — SEC_IMAGE section map (MEM_IMAGE VAD)
+      plus header wipe. Measured: cross-process SEC_IMAGE execute mapping is
+      DENIED on this system (0xC0000022), so the injector falls back to private
+      manual mapping; APC self-map for MEM_IMAGE is the roadmap fix.
+- [x] **Thread-origin hygiene `thread.h`** — work queued via
+      TrySubmitThreadpoolCallback so thread start addresses live in system
+      worker code; CreateThread fallback.
+- [x] **Hook engine `hook.h`** — inline detour+trampoline (trampoline allocated
+      within +/-2GB of target), HWBP+VEH and guard-page+VEH zero-write modes,
+      unhook/restore, self-integrity check. Compile-time selectable.
+- [x] **Stack layer `stack.h` + `tools/stackwalk`** — CET CPU capability via
+      CPUID, per-process shadow-stack/PT policy passed by injector (never
+      assumed), RtlAddFunctionTable register/unregister toggle, frame walk +
+      unbacked-frame classification.
+- [x] **Harness** — `tools/host` (CRT, /MD), `tools/testdll` (zero-import DLL),
+      `tools/inject` (section-map then private-map fallback, config block,
+      remote thread), `tools/metrics` (M-lines).
+- [x] **Binary hygiene** — `/Zl`, `/OPT:REF,ICF`, `/DEBUG:NONE`, post-link strip
+      of Rich header + all debug directories. `/GL`+`/LTCG` impossible: C2268
+      vs redefined compiler library helpers.
+
+### Live injection result (2026-09-17)
+
+Injected `testdll.dll` into running `host.exe`: strings decrypted in-process,
+`ucrtbase!puts` resolved by export hash and called with a decrypted string,
+`host_target` located by pattern in the host image and inline-hooked, host
+control flow changed (`host_target` returns 1337). Walk reports 1 unbacked
+frame (our worker) — the measured tell, not hidden.
+
+### Metrics (tools/metrics, 2026-09-17)
+
+| image | M1 mods/funcs | M2 crt strings | M3 plaintext | M10 bytes |
+|---|---|---|---|---|
+| nocrt-demo.exe | 1 / 4 | 0 | 0 / 0 | 10752 |
+| patscan.exe | 1 / 10 | 0 | 0 / 0 | 9728 |
+| nocrt-zero.exe | 0 / 0 | 0 | 0 / 0 | 11776 |
+| testdll.dll | 0 / 0 | 0 | 0 / 0 | 11776 |
+
+M7: reloc directory 0/0 on all four — valid for x64 RIP-relative images with
+empty `.data`; SEC_IMAGE mapping still rebases, private mapping applies no
+fixups because none exist.
+
+### Measured limitations (honest)
+
+- Cross-process SEC_IMAGE execute mapping denied here (0xC0000022); v1 ships
+  private mapping (MEM_PRIVATE tell remains). Roadmap: APC self-map.
+- A `/MT` host hides its CRT inside the exe; export-hash reachability needs a
+  `/MD` host (or pattern-scanning the host's static CRT, roadmap).
+- `ucrtbase.dll` on this system exports `puts` but not `printf`; `msvcrt.dll`
+  exports the full family but is not loaded by modern CRT hosts.
+- Runtime `str_hash` over a literal materializes the plaintext in `.rdata`;
+  all name hashes must fold at compile time (template parameters). Caught by
+  M2 during development.
+- Inline trampoline copies patch_len bytes verbatim: the patch length must
+  cover whole instructions at the target (no length disassembler yet).
+- CET shadow stacks / Intel PT: CPU reports no CET support on this lab box
+  (`cet_cpu=0`); policy is still queried per process by the injector. If
+  shadow stacks are active, return-address spoofing would fault — spoofing
+  paths stay gated on that policy.

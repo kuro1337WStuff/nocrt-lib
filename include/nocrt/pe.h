@@ -79,6 +79,21 @@ struct mapped_pe {
         return image_base + rva_from_offset(off);
     }
 
+    // RVA -> file offset via the section table (virtual -> raw). Lets the
+    // export walker parse a file-mapped image, not just a live module.
+    nocrt_size offset_from_rva(unsigned long rva) const {
+        for (unsigned short i = 0; i < section_count; ++i) {
+            const unsigned char* s = sections + (nocrt_size)i * 40;
+            const unsigned long va = rd32(s + 12);
+            const unsigned long raw_size = rd32(s + 16);
+            const unsigned long raw_ptr = rd32(s + 20);
+            if (rva >= va && rva < va + raw_size) {
+                return raw_ptr + (nocrt_size)(rva - va);
+            }
+        }
+        return (nocrt_size)rva;
+    }
+
 private:
     bool parse_headers() {
         if (size < 64) return false;

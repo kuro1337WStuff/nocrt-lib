@@ -18,12 +18,6 @@
 
 namespace nocrt {
 
-constexpr unsigned long long kLazySalt = 0x9E3779B97F4A7C15ull;
-
-constexpr unsigned long long line_seed(unsigned long long line) {
-    return xmix(line * 0x1000003B9ull ^ kLazySalt);
-}
-
 // FNV-1a style name hash, seeded. Identical at compile time and runtime.
 constexpr unsigned long long str_hash(const char* s, unsigned long long seed) {
     unsigned long long h = seed ^ 0xCBF29CE484222325ull;
@@ -66,9 +60,13 @@ inline unsigned long long hash_name(const char* s, unsigned long long seed) {
     return h;
 }
 
-inline const unsigned char* find_export(const unsigned char* base,
-                                        unsigned long long want,
-                                        unsigned long long seed) {
+// Export-directory walk. `rva2ptr` translates an RVA to a byte pointer, so the
+// same parser serves live modules (identity) and file mappings (section
+// fixup) without duplicating the walk.
+template <typename RvaToPtr>
+inline const unsigned char* resolve_exports(const unsigned char* base, RvaToPtr rva2ptr,
+                                            unsigned long long want,
+                                            unsigned long long seed) {
     if (base[0] != 'M' || base[1] != 'Z') return nullptr;
     const unsigned long lfanew = rd32le(base + 0x3C);
     const unsigned char* nt = base + lfanew;
@@ -79,22 +77,39 @@ inline const unsigned char* find_export(const unsigned char* base,
     const unsigned long exp_rva = rd32le(datadir);
     const unsigned long exp_size = rd32le(datadir + 4);
     if (!exp_rva) return nullptr;
-    const unsigned char* exp = base + exp_rva;
+    const unsigned char* exp = rva2ptr(exp_rva);
+    if (!exp) return nullptr;
     const unsigned long num_names = rd32le(exp + 24);
     const unsigned long addr_funcs = rd32le(exp + 28);
     const unsigned long addr_names = rd32le(exp + 32);
     const unsigned long addr_ords = rd32le(exp + 36);
     if (!num_names || !addr_funcs || !addr_names || !addr_ords) return nullptr;
+    const unsigned char* names = rva2ptr(addr_names);
+    const unsigned char* ords = rva2ptr(addr_ords);
+    const unsigned char* funcs = rva2ptr(addr_funcs);
+    if (!names || !ords || !funcs) return nullptr;
     for (unsigned long i = 0; i < num_names; ++i) {
-        const char* name = (const char*)(base + rd32le(base + addr_names + i * 4));
-        if (hash_name(name, seed) != want) continue;
-        const unsigned short ord = rd16le(base + addr_ords + i * 2);
-        const unsigned long func_rva = rd32le(base + addr_funcs + (unsigned long)ord * 4);
+        const unsigned char* np = rva2ptr(rd32le(names + i * 4));
+        if (!np) continue;
+        if (hash_name((const char*)np, seed) != want) continue;
+        const unsigned short ord = rd16le(ords + i * 2);
+        const unsigned long func_rva = rd32le(funcs + (unsigned long)ord * 4);
         // Forwarded exports point back inside the export directory.
         if (func_rva >= exp_rva && func_rva < exp_rva + exp_size) return nullptr;
-        return base + func_rva;
+        return rva2ptr(func_rva);
     }
     return nullptr;
+}
+
+struct identity_rva {
+    const unsigned char* base;
+    const unsigned char* operator()(unsigned long rva) const { return base + rva; }
+};
+
+inline const unsigned char* find_export(const unsigned char* base,
+                                        unsigned long long want,
+                                        unsigned long long seed) {
+    return resolve_exports(base, identity_rva{base}, want, seed);
 }
 
 } // namespace lazy_detail
@@ -121,6 +136,34 @@ inline void* lazy_resolve(unsigned long long want, unsigned long long seed) {
 template <unsigned long long H, unsigned long long Seed>
 inline void* lazy_fn() {
     return lazy_resolve(H, Seed);
+}
+
+// Base address of the index-th loaded module (0 = the host image). Lets a
+// manually-mapped DLL inspect and patch its host without any imports.
+inline const unsigned char* module_base(nocrt_size index) {
+    const unsigned char* p = lazy_detail::peb();
+    if (!p) return nullptr;
+    const unsigned char* ldr = *(const unsigned char**)(p + lazy_detail::kPebLdr);
+    if (!ldr) return nullptr;
+    const unsigned char* head = ldr + lazy_detail::kLdrInMemoryOrder;
+    const unsigned char* cur = *(const unsigned char**)(head);
+    nocrt_size i = 0;
+    while (cur && cur != head) {
+        const unsigned char* dll_base = *(const unsigned char**)(cur + lazy_detail::kEntryDllBase);
+        if (i == index) return dll_base;
+        ++i;
+        cur = *(const unsigned char**)(cur);
+    }
+    return nullptr;
+}
+
+// SizeOfImage for a mapped module, read straight from its optional header.
+inline unsigned long module_size(const unsigned char* base) {
+    if (!base || base[0] != 'M' || base[1] != 'Z') return 0;
+    const unsigned char* nt = base + rd32(base + 0x3C);
+    if (rd32(nt) != 0x4550) return 0;
+    const unsigned char* opt = nt + 24;
+    return rd32(opt + 56);
 }
 
 } // namespace nocrt

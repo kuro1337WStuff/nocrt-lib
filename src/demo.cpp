@@ -1,5 +1,9 @@
 #include "nocrt/nocrt.h"
 #include "nocrt/xstr.h"
+#include "nocrt/secstr.h"
+
+constexpr auto kSecA = NOCRT_SECSTR("hardened");
+constexpr auto kSecB = NOCRT_SECSTR("hardened");
 
 // Same literal at two expansion sites: compile-time polymorphic encryption
 // must yield different ciphertext for each.
@@ -53,6 +57,35 @@ extern "C" int nocrt_main() {
         }
         nocrt::out("xstr decrypt: ", 14);
         nocrt::out(da.c_str());
+        nocrt::out("\r\n", 2);
+    }
+
+    // Hardened strings: same literal at two sites must produce different
+    // ciphertext AND different decrypt machine code (no shared routine).
+    nocrt::out("secstr code A: ", 15);
+    print_hex((unsigned long long)(const void*)nocrt::sec_code(kSecA));
+    nocrt::out("\r\n", 2);
+    nocrt::out("secstr code B: ", 15);
+    print_hex((unsigned long long)(const void*)nocrt::sec_code(kSecB));
+    nocrt::out("\r\n", 2);
+    if (nocrt::sec_code(kSecA) == nocrt::sec_code(kSecB)) {
+        nocrt::err("secstr shares decrypt code\r\n", 30);
+        return 1;
+    }
+    if (nocrt::fnv1a((const char*)nocrt::sec_code(kSecA), 32) ==
+        nocrt::fnv1a((const char*)nocrt::sec_code(kSecB), 32)) {
+        nocrt::err("secstr decrypt code identical\r\n", 33);
+        return 1;
+    }
+    {
+        nocrt::secview va(kSecA);
+        nocrt::secview vb(kSecB);
+        if (strcmp(va.c_str(), vb.c_str()) != 0 || strlen(va.c_str()) != 8) {
+            nocrt::err("secstr decrypt failed\r\n", 23);
+            return 1;
+        }
+        nocrt::out("secstr decrypt: ", 16);
+        nocrt::out(va.c_str());
         nocrt::out("\r\n", 2);
     }
 
