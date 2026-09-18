@@ -97,4 +97,52 @@ inline nocrt_size count_unbacked_frames(unsigned long long* frames, nocrt_size c
     return unbacked;
 }
 
+// Step-0 capability probe (research fold-in 5). Every later hooking decision
+// branches on these; record once at init.
+struct nocrt_caps {
+    unsigned long cet_cpu;        // CPUID.7.0:ECX[7]
+    unsigned long cet_ss_cpu;     // CPUID.7.0:EDX[20]
+    unsigned long shadow_policy;  // ProcessUserShadowStackPolicy (class 11) [VERIFY value]
+    unsigned long ssp_live;       // RDSSPQ != 0 (NOP-safe when CET_SS off)
+};
+
+inline nocrt_caps probe_caps() {
+    nocrt_caps c = {};
+#if defined(_MSC_VER)
+    int regs[4] = {0, 0, 0, 0};
+    __cpuidex(regs, 7, 0);
+    c.cet_cpu = (regs[2] >> 7) & 1;
+    c.cet_ss_cpu = (regs[3] >> 20) & 1;
+    c.ssp_live = _rdsspq() != 0;
+    using GPM_t = int(__stdcall*)(void*, unsigned long, void*, unsigned long, unsigned long*);
+    const auto gpm = (GPM_t)NOCRT_FN("GetProcessMitigationPolicy");
+    if (gpm) {
+        unsigned long pol = 0;
+        void* h = (void*)(long long)-2;  // GetCurrentProcess()
+        if (gpm(h, 11, &pol, sizeof(pol), nullptr)) c.shadow_policy = pol & 3;
+    }
+#endif
+    return c;
+}
+
+// Register our own image's unwind info so walkers do not treat our frames as
+// leaves. Without this, RtlLookupFunctionEntry returns NULL for manually
+// mapped ranges and the walk continues off [RSP] with wrong results.
+inline bool register_own_unwind(unsigned long long image_base) {
+    const unsigned char* base = (const unsigned char*)image_base;
+    if (base[0] != 'M' || base[1] != 'Z') return false;
+    const unsigned char* nt = base + rd32(base + 0x3C);
+    if (rd32(nt) != 0x4550) return false;
+    const unsigned char* opt = nt + 24;
+    const unsigned short magic = rd16(opt);
+    const unsigned char* dd = opt + ((magic == 0x20B) ? 112 : 96);
+    const unsigned long pdata_rva = rd32(dd + 3 * 8);
+    const unsigned long pdata_size = rd32(dd + 3 * 8 + 4);
+    if (!pdata_rva || !pdata_size) return false;
+    using RAFT_t = unsigned char(__stdcall*)(void*, unsigned long, unsigned long long);
+    const auto raft = (RAFT_t)NOCRT_FN("RtlAddFunctionTable");
+    if (!raft) return false;
+    return raft((void*)(base + pdata_rva), pdata_size / 12, image_base) != 0;
+}
+
 } // namespace nocrt

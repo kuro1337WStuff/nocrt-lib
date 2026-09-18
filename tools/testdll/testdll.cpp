@@ -109,6 +109,20 @@ static unsigned long __stdcall worker(void*) {
 
 extern "C" int nocrt_dll_main(nocrt_dword reason) {
     if (reason != kDllProcessAttach) return 1;
+    const nocrt::nocrt_caps caps = nocrt::probe_caps();
+    const bool unwind_ok =
+        nocrt::g_config ? nocrt::register_own_unwind(nocrt::g_config->image_base) : false;
+    nocrt::out("[dbg] caps cet=", 15);
+    print_hex(caps.cet_cpu);
+    nocrt::out(" ss=", 5);
+    print_hex(caps.cet_ss_cpu);
+    nocrt::out(" pol=", 6);
+    print_hex(caps.shadow_policy);
+    nocrt::out(" ssp=", 6);
+    print_hex(caps.ssp_live);
+    nocrt::out(" unwind=", 9);
+    print_hex(unwind_ok ? 1 : 0);
+    nocrt::out("\r\n", 2);
     // Side channel independent of host stdout: proves whether the remote
     // thread executes at all.
     {

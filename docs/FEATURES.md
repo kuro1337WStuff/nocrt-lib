@@ -364,6 +364,52 @@ without source.** Findings and responses:
   `VirtualSize > SizeOfRawData`). Which side wins depends on the scanner class
   in the threat model — decision pending (see open questions).
 
+## Research fold-in 5 — stack-walk-safe hooking (2026-09-17)
+
+Ranked by completeness against unwind/frame-chain walks x residual tells x
+freestanding cost: (1) frame-less jmp-only inline instrumentation with
+image-backed trampoline and atomic INT3 patch — needs no spoofing for
+observe-and-forward; (2) HWBP+VEH observe-only with DRs installed via
+NtContinue on own thread and RF-flag discipline — for checksummed targets,
+<=4 slots per thread; (3) executed-gadget return-address spoofing (~60 B asm +
+gadget scanner validated via RtlLookupFunctionEntry) — only when calling out
+under post-call validation; (4) full synthetic chain on the real thread stack
+— only on evidence the target validates frame sizes/RSP bounds; (5) IAT hooks
+— niche, nearly free where applicable. Non-goals: NtContinue/RtlRestoreContext
+teleportation as primary (SetContextIpValidation + EHCONT deny on modern ntdll),
+CET WRSS spoofing, guard-page hooks against unknown samples (collateral traps
+and VEH conflicts), Intel PT suppression (impossible), ETW-TI suppression
+(impossible from user mode).
+
+- ADOPTED at init: capability probe (`probe_caps`: CPUID CET/CET_SS, RDSSPQ
+  ground truth, ProcessUserShadowStackPolicy) and `register_own_unwind`
+  (RtlAddFunctionTable for our image) — without the latter our manually mapped
+  frames unwind as leaves, silently corrupting walks.
+- ADOPTED as rules: scratch regs rax/r10/r11 only in detours; never call from
+  a frame-less detour (jmp only); restricted length decoder that REFUSES
+  unknown prologue forms and logs the refusal; trampoline within +/-2GB;
+  FlushInstructionCache after every patch; per-thread state via TEB slots.
+- Detector calibration (Peregrine, author-documented): ROP-style and MEM_IMAGE
+  spoofing pass its call-stack check; it assumes exactly one trampoline frame
+  (SKIP_FRAMES 2), so frame-less instrumentation shifts its view; rate-limiter
+  budgets mean heavy legitimate traffic disables validation entirely.
+
+### Measured on this lab box (cowtest, 2026-09-17)
+
+- **SEC_IMAGE mapping is denied system-wide** (NtMapViewOfSection
+  0xC0000022 even in-process, both kernel32 and winmm). Image-backed
+  trampolines and image-backed self-mapping are therefore UNAVAILABLE here;
+  v1 stays MEM_PRIVATE and the MEM_MAPPED-RX fallback (data section of a
+  signed file) is the documented alternative (passes call-stack checks, fails
+  VAD scans).
+- **COW folklore falsified here**: after VirtualProtect(RW) + store + restore
+  on a loaded kernel32 .text page, VirtualQuery still reports Type=MEM_IMAGE,
+  Protect=RX, AllocationBase=image base, section name intact. Inline hooks
+  inside loaded modules do NOT produce a MEM_PRIVATE tell on this build, and
+  no new Protect/AllocationProtect mismatch appears after restore. Consistent
+  with Peregrine; contradicts the widely repeated "written image pages report
+  MEM_PRIVATE" claim.
+
 ## Open questions / known-broken (2026-09-17, evidence attached)
 
 1. **Manual-mapper flakiness (BLOCKER for repeatable live tests).** One full

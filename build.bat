@@ -63,6 +63,8 @@ cl /nologo /O2 tools\stackwalk\stackwalk.cpp /Febuild\stackwalk.exe
 if errorlevel 1 exit /b 1
 cl /nologo /O2 tools\metrics\metrics.cpp /Febuild\metrics.exe
 if errorlevel 1 exit /b 1
+cl /nologo /O2 tools\cowtest\cowtest.cpp /Febuild\cowtest.exe
+if errorlevel 1 exit /b 1
 
 echo.
 echo === nocrt-demo imports (expect KERNEL32 only) ===
