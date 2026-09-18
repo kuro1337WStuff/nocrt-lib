@@ -299,3 +299,67 @@ without source.** Findings and responses:
 - Remaining known leaks, accepted and documented: length in the clear,
   high-entropy aligned blobs conspicuous in `.rdata`, seed fragments visible
   to `strings`, no tamper detection on the seed immediate.
+
+## Research fold-in 3 — anti-analysis observation set (2026-09-17)
+
+- ADOPTED FRAMING: **observation-first, stealth-second.** Inline detours and
+  hook-detection are mutually exclusive at ring 3: the moment we detour
+  `NtQueryInformationProcess`, a sample running a prologue scan finds `FF 25`
+  where `4C 8B D1` should be. The deliverable reports honestly that our hooks
+  are visible, detects when the sample notices (prologue sweep, ntdll-remap
+  chain, VAD walks), and marks coverage terminated at that point — rather
+  than claiming stealth we do not have.
+- One generic trampoline covers ~80% of the observation list: every `ntdll!Nt*`
+  stub shares the same prologue shape, so per-API work is only argument
+  marshalling. Ranked top hooks (prevalence x analyst value): process/module
+  enumeration, `NtQueryInformationProcess` 7/30/31, `ThreadHideFromDebugger`,
+  firmware/disk fingerprints, ntdll-remap unhook chain, tick/sleep skew,
+  single-instance mutexes, resource gates, window enumeration, ETW/AMSI
+  patching, VM-artifact registry probes, parent/CommandLine inspection,
+  `NtGetContextThread` DR reads, self `ReadVirtualMemory`, WMI fingerprint.
+- HWBP+VEH deferred to v2, paired unconditionally with an
+  `NtGetContextThread` DR-spoofing hook when shipped. Guard-page hooking
+  REJECTED: dominated by both alternatives (one-shot guard needs single-step
+  re-arm machinery anyway, and PAGE_GUARD is itself a tell).
+- Acceptance oracle chosen: **al-khaser** as the test target — every hook that
+  should fire, fires.
+- Three non-hook duties adopted: own-hook integrity sweep (also detects
+  FOREIGN hooks from EDRs or the sample), direct-syscall/shellcode scan over
+  MEM_PRIVATE+EXECUTE regions, and an environment pre-flight assertion line.
+  Every log record carries a monotonic seqno and a coverage-valid flag.
+- All offsets and info-class values from the research are UNVERIFIED against
+  headers; resolve dynamically at init, never hardcode.
+
+## Research fold-in 4 — minimal PE, measured (2026-09-17)
+
+- APPLIED: `/Gw /Zc:inline /INCREMENTAL:NO /MANIFEST:NO` and
+  `/MERGE:.pdata=.rdata /MERGE:.rdata=.text`. Measured result: images drop to
+  **2 sections** (`.text` chars `0x60000020` = CODE|EXECUTE|READ, no WRITE;
+  `.data` pure bss, `SizeOfRawData=0`); `testdll.dll` 10240 -> 9728 B,
+  `nocrt-zero.exe` 11776 -> 11264 B, `SizeOfImage` -> `0x5000`.
+- `/MERGE:.reloc` is a non-issue and an error (LNK1272): our x64 images emit
+  **no `.reloc` section at all** (RIP-relative codegen, empty `.data`), so
+  there is nothing to merge and nothing for a mapper to fix up.
+- `/FILEALIGN` DOES exist in link.exe (verified via `link /?`), correcting the
+  research agent's unverified claim. Not used: on-disk padding buys little
+  against normalizing static scanners.
+- `/ALIGN:16` skipped BY DESIGN: sub-page SectionAlignment destroys the
+  per-section RX/RW protection granularity our mapper and stealth model rely
+  on, and makes the image non-LoadLibrary-able.
+- Roadmap (recipe recorded, not implemented): move PE header to
+  `e_lfanew=0x40` (delete DOS stub + Rich) for -184 B raw and
+  `SizeOfHeaders` 1024 -> 512 (valid at <=4 sections, which we now satisfy).
+- `secstr` byte cost is real: two 8-char test strings cost ~0.9-1.6 KB because
+  every `sec_poskey` inlines a full `xmix`. Gate self-tests behind
+  `NOCRT_SELFTEST` if a demo image ever ships; the product DLL keeps `secstr`.
+- Hook engine decision: do NOT vendor MinHook/Detours/PolyHook2. Bake the
+  stolen length per target using our existing pattern scanner (~250-500 B, no
+  length disassembler); INT3+VEH atomic single-byte variant removes the
+  thread-freeze machinery; HWBP+VEH remains the best stealth-per-byte.
+- Mapper already compliant with the transient-write rule: allocate RW, apply
+  copies, set final per-section protections immediately; no persistent RWX.
+- STRATEGIC TENSION recorded: byte-minimization and module-size plausibility
+  pull opposite ways (a 7 KB module is itself anomalous; the pad-up trick
+  costs ~40 B of file for a plausible `SizeOfImage` via
+  `VirtualSize > SizeOfRawData`). Which side wins depends on the scanner class
+  in the threat model — decision pending (see open questions).

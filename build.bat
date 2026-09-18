@@ -15,8 +15,14 @@ rem /Zl stops objects requesting LIBCMT; /OPT shrinks; /DEBUG:NONE keeps PDB
 rem paths out (strip.exe also zeroes Rich + debug dirs post-link).
 rem NOTE: /GL+/LTCG are deliberately absent - C2268: LTCG cannot compile
 rem objects that redefine compiler predefined library helpers (memcpy etc).
-set CFL=/nologo /O2 /W4 /Zl /GS- /EHs-c- /GR- /std:c++latest /Iinclude
-set LKF=/OPT:REF,ICF /DEBUG:NONE
+rem /Gw + /Zc:inline let REF/ICF drop unreferenced globals and inline bodies
+rem (research fold-in 3). Merges collapse 5 sections to 2: .pdata and .reloc
+rem are located via DataDirectory not name; .rdata into .text stays RX.
+rem .data is NOT merged (would create RWX). /ALIGN:16 deliberately skipped:
+rem sub-page alignment destroys per-section RX/RW protection granularity.
+set CFL=/nologo /O2 /W4 /Zl /Gw /Zc:inline /GS- /EHs-c- /GR- /std:c++latest /Iinclude
+set LKF=/OPT:REF,ICF /DEBUG:NONE /INCREMENTAL:NO /MANIFEST:NO ^
+        /MERGE:.pdata=.rdata /MERGE:.rdata=.text
 
 cl %CFL% src\nocrt.cpp src\entry.cpp src\demo.cpp ^
    /Febuild\nocrt-demo.exe /link %LKF% /ENTRY:nocrt_entry /SUBSYSTEM:CONSOLE /NODEFAULTLIB kernel32.lib
