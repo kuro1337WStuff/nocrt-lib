@@ -264,3 +264,38 @@ flags; (8) RDTSC timing deltas; (9) PEB debug flags; (10) ThreadHideFromDebugger
   NtSetContextThread leaves Win32StartAddress unchanged on this build;
   (b) DR-breakpoint behavior on a thread that called ThreadHideFromDebugger
   (reported outcomes range from "VEH still fires" to infinite #DB loop).
+
+## Research fold-in 2 — adversarial string recovery (2026-09-17)
+
+An adversarial agent attacked the string scheme and recovered everything.
+Scope note: it analyzed the pre-`secstr` binaries, so its timings describe
+`xstr`; the structural critiques apply to `secstr` as well. Verdict: **~2 min
+dynamic (breakpoint WriteFile), ~15 min static with the header, <=30 min
+without source.** Findings and responses:
+
+- **The key ships in the image.** Symmetric XOR whose only secret is a 64-bit
+  seed, present as a `mov rax, imm64` and as a `.rdata` qword. This is
+  obfuscation of a published constant, not encryption. ACCEPTED as the threat
+  model: `xstr`/`secstr` defeat passive `strings`/grep/AV-signature scanning of
+  the on-disk image and nothing more. Real encryption needs an external key or
+  a white-box construction; out of scope for v1, recorded as the ceiling.
+- **Seed derived from `__LINE__` collapsed the keyspace to ~1.7k** (line x
+  counter brute force, byte-exact recovery). FIXED: `line_seed` now mixes a
+  per-build salt from `__DATE__`/`__TIME__` (`build_salt`, overridable via
+  `NOCRT_SALT`), so the keyspace is no longer the source line number and
+  ciphertext differs across builds (kills the cross-build lookup table).
+- **Zeroization was fictional in the shipped artifact**: MSVC eliminated the
+  destructor `memset` as a dead store; plaintexts survived on the stack.
+  FIXED: both `xdec` and `secview` wipe via a `volatile` loop.
+- **Latent cleartext leak**: an unwrapped error literal contained the protected
+  word, hidden only by dead-code elimination. FIXED: replaced with a
+  non-secret message.
+- **What `secstr` adds over `xstr`, stated precisely**: per-string distinct
+  decrypt CODE (different op sequences/constants), so reversing one routine no
+  longer hands you the others for free. It does NOT stop an analyst who writes
+  one generic interpreter over the public 6-op alphabet and reads each
+  string's constants from its own code. Cost raised from "one reverse = all"
+  to "one interpreter + per-string constant extraction".
+- Remaining known leaks, accepted and documented: length in the clear,
+  high-entropy aligned blobs conspicuous in `.rdata`, seed fragments visible
+  to `strings`, no tamper detection on the seed immediate.

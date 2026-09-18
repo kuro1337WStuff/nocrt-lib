@@ -17,9 +17,11 @@ constexpr unsigned char xkey_byte(unsigned long long seed, nocrt_size i) {
 }
 
 // Per-instantiation seed. line+counter make every macro expansion unique,
-// which is what makes the encryption polymorphic across use sites.
+// which is what makes the encryption polymorphic across use sites. The salt is
+// per-build (see nocrt.h build_salt): a fixed salt let an adversary brute-force
+// line x counter in ~1.7k tries.
 constexpr unsigned long long xseed(unsigned long long line, unsigned long long counter) {
-    return xmix((line * 0x1000003B9ull) ^ (counter * 0x7F4A7C15ull) ^ 0xA5A5A5A5C3C3C3C3ull);
+    return xmix((line * 0x1000003B9ull) ^ (counter * 0x7F4A7C15ull) ^ NOCRT_SALT);
 }
 
 template <nocrt_size N, unsigned long long Seed>
@@ -44,7 +46,12 @@ public:
             buf[i] = (char)((unsigned char)s.data[i] ^ xkey_byte(Seed, i));
         }
     }
-    ~xdec() { memset(buf, 0, N); }
+    ~xdec() {
+        // volatile so the wipe survives dead-store elimination (an optimizer
+        // removed the non-volatile version in a shipped build).
+        volatile char* v = buf;
+        for (nocrt_size i = 0; i < N; ++i) v[i] = 0;
+    }
     const char* c_str() const { return buf; }
     constexpr nocrt_size size() const { return N; }
 };

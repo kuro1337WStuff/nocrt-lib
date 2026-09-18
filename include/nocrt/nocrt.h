@@ -58,11 +58,32 @@ constexpr unsigned long long xmix(unsigned long long s) {
     return s;
 }
 
-// Per-expansion-site seed from __LINE__; shared by lazy.h and secstr.h so
-// identical literals at different sites bake different immediates.
-constexpr unsigned long long kLineSalt = 0x9E3779B97F4A7C15ull;
+// Per-expansion-site seed. Research fold-in 2026-09-17: seeds must NOT be
+// derivable from __LINE__ alone (an adversary brute-forced line x counter in
+// ~1.7k tries). Mix in a per-build salt so the keyspace is not the source line
+// number and ciphertext differs across builds. Override NOCRT_SALT for
+// reproducible builds.
+constexpr unsigned long long build_salt() {
+    const char* d = __DATE__;
+    const char* t = __TIME__;
+    unsigned long long h = 0xCBF29CE484222325ull;
+    for (nocrt_size i = 0; d[i]; ++i) {
+        h ^= (unsigned char)d[i];
+        h *= 0x100000001B3ull;
+    }
+    for (nocrt_size i = 0; t[i]; ++i) {
+        h ^= (unsigned char)t[i];
+        h *= 0x100000001B3ull;
+    }
+    return xmix(h);
+}
+
+#ifndef NOCRT_SALT
+#define NOCRT_SALT ::nocrt::build_salt()
+#endif
+
 constexpr unsigned long long line_seed(unsigned long long line) {
-    return xmix(line * 0x1000003B9ull ^ kLineSalt);
+    return xmix(line * 0x1000003B9ull ^ NOCRT_SALT);
 }
 
 // Every Win32 call goes through this table. In the default build it is filled

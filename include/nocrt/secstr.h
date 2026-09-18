@@ -113,7 +113,11 @@ public:
     explicit secview(const secstr<N, P, Seed>& s) : buf{} {
         for (nocrt_size i = 0; i < N; ++i) buf[i] = (char)sec_dec<P>(s.at(i), i, Seed);
     }
-    ~secview() { memset(buf, 0, N); }
+    ~secview() {
+        // volatile so the wipe survives dead-store elimination.
+        volatile char* v = buf;
+        for (nocrt_size i = 0; i < N; ++i) v[i] = 0;
+    }
     const char* c_str() const { return buf; }
     constexpr nocrt_size size() const { return N; }
 };

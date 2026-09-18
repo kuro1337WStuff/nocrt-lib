@@ -44,7 +44,10 @@ extern "C" int nocrt_main() {
     nocrt::out("\r\n", 2);
 
     if (nocrt::fnv1a(kWordA.data, kWordA.size()) == nocrt::fnv1a(kWordB.data, kWordB.size())) {
-        nocrt::err("xstr not polymorphic\r\n", 22);
+        // Must not contain the protected literal: an unwrapped error string
+        // here would hand the secret to any analyst if DCE ever stops folding
+        // this guard.
+        nocrt::err("cipher collision\r\n", 18);
         return 1;
     }
 
