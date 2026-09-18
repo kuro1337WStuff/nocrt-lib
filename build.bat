@@ -43,7 +43,8 @@ rem The shipped artifact: a zero-import DLL, image-based relocatable.
 rem NOTE: section merges are DISABLED for the DLL: merged images crash under
 rem our private manual mapper (fault inside mapped .text, root cause open -
 rem see FEATURES open questions). Merges stay on for disk-run images only.
-cl %CFL% /DNOCRT_ZERO_IMPORT=1 src\nocrt.cpp tools\testdll\testdll.cpp ^
+cl %CFL% /Ithird_party /DNOCRT_ZERO_IMPORT=1 src\nocrt.cpp third_party\hde\hde64.c ^
+   tools\testdll\testdll.cpp ^
    /Febuild\testdll.dll /link /OPT:REF,ICF /DEBUG:NONE /INCREMENTAL:NO /MANIFEST:NO ^
    /DLL /ENTRY:NocrtDllEntry /SUBSYSTEM:WINDOWS /NODEFAULTLIB /FIXED:NO
 if errorlevel 1 exit /b 1
@@ -64,6 +65,8 @@ if errorlevel 1 exit /b 1
 cl /nologo /O2 tools\metrics\metrics.cpp /Febuild\metrics.exe
 if errorlevel 1 exit /b 1
 cl /nologo /O2 tools\cowtest\cowtest.cpp /Febuild\cowtest.exe
+if errorlevel 1 exit /b 1
+cl /nologo /O2 /MD tools\loadtest\loadtest.cpp /Febuild\loadtest.exe
 if errorlevel 1 exit /b 1
 
 echo.

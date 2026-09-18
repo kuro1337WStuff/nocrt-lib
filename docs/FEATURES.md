@@ -410,6 +410,47 @@ and VEH conflicts), Intel PT suppression (impossible), ETW-TI suppression
   with Peregrine; contradicts the widely repeated "written image pages report
   MEM_PRIVATE" claim.
 
+## Research fold-in 6 — hook engines + stack spoofing survey (2026-09-17)
+
+Survey verdict: no mainstream engine (MinHook, PolyHook2, Detours) addresses
+stack-walk cleanliness; Detours PR #308 acknowledges the gap unmerged. We
+therefore ship our own engine taking: MinHook's slot-allocator shape,
+Detours' RW->RX protection lifecycle and thread-Rip fixup, and our own
+unwind registration. Vendored public-domain HDE64 (third_party/hde, MinHook,
+BSD-2-clause attribution kept; windows.h dependency removed for freestanding
+safety) plus a restricted prologue probe that REFUSES RIP-relative operands,
+branches, unsupported stack ops, and >16-byte steals (reasons are data).
+
+Shipped this fold-in:
+- [x] `hook_install`/`hook_remove`: shared trampoline region (RW, +/-1GB of
+      target, 64 B slots) flipped RX once; E9 rel32 at target; whole
+      instructions stolen per probe; thread suspend + parked-Rip remap;
+      per-trampoline `RtlAddFunctionTable` with hand-built UNWIND_INFO
+      (push-nonvol + alloc small/large forms; other prologues refused);
+      FlushInstructionCache after every write.
+- [x] `probe_caps` + `register_own_unwind` (fold-in 5) wired into entry.
+- [x] `pivot_call`: pure-C stack pivot via RtlCaptureContext/RtlRestoreContext
+      (no asm, no gadget hunt, no syscall), TEB.ArbitraryUserPointer as context
+      slot; refuses when shadow stacks live/enforced (SetContextIpValidation).
+- [x] Loader-mode contract: DllMain is a no-op (work under the loader lock
+      crashed LoadLibrary); consumers kick off via exported NocrtManualEntry
+      after load. `tools/loadtest` exercises this path.
+- [x] `tools/cowtest`, `tools/loadtest` added; `tools/inspect.ps1` gained
+      export/entry dumping.
+- SKIP list adopted: sleep obfuscation families (Ekko/Foliage/Zilean/
+      DeathSleep), module stomping, PEB-entry fabrication, HWBP as a general
+      solution (4 slots/thread, DR visibility), VEH splicing, NtContinue
+      teleportation as primary, CET WRSS spoofing, guard-page hooks vs unknown
+      samples.
+- REMAINS DETECTABLE (documented, blunt): hook bytes vs disk comparison
+      (kernel readers unbeatable from user mode); our code executing in
+      unbacked memory (ETW-TI attribution); manual mapping itself (VAD/PEB);
+      kernel telemetry (ETW-TI, notify routines, ObRegisterCallbacks);
+      gadget-shaped return addresses (image_rop rules); CET/HSP where
+      enabled; stack truncation (null-terminated-stack rules); Intel PT
+      (no production use found - folklore, but structurally fatal to
+      unwind-metadata spoofing).
+
 ## Open questions / known-broken (2026-09-17, evidence attached)
 
 1. **Manual-mapper flakiness (BLOCKER for repeatable live tests).** One full
@@ -437,3 +478,11 @@ and VEH conflicts), Intel PT suppression (impossible), ETW-TI suppression
    `.data` VirtualSize correctly, but padded images fail under the mapper;
    disabled for the DLL pending (1). `DllCharacteristics` plausibility
    (0x8160) is applied unconditionally and is harmless.
+5. **Loader-mode kickoff crash (2026-09-18).** With the no-op DllMain fix,
+   `LoadLibrary` succeeds and the exported kickoff runs; the entry side-channel
+   file is written (`entry-ran`), but no stdout output appears and the process
+   then dies (0xC0000005). Narrowed to: stdout path (`nocrt::out` -> api())
+   silent in loader mode while raw CreateFileA/WriteFile works, then a fault
+   after the side-channel block. Suspects: api()/GetStdHandle interaction under
+   a redirected-stdout host, or the hook_install path in loader context.
+   Next: per-stage side-channel writes around each out()/spawn/hook step.

@@ -16,9 +16,15 @@ extern "C" int nocrt_dll_main(nocrt_dword reason);
 
 extern "C" __declspec(dllexport) int __stdcall NocrtDllEntry(void* hinst, nocrt_dword reason,
                                                              void* reserved) {
+    // Deliberately a no-op: doing lazy resolution, pool spawns or unwind
+    // registration inside DllMain runs under the loader lock and crashes or
+    // deadlocks when loader-mapped. Consumers kick off work after load via
+    // NocrtManualEntry (loader mode) or the mapper calls it directly
+    // (manual-map mode).
     (void)hinst;
+    (void)reason;
     (void)reserved;
-    return nocrt_dll_main(reason);
+    return 1;
 }
 
 extern "C" __declspec(dllexport) unsigned long __stdcall NocrtManualEntry(void* config) {

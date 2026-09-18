@@ -74,14 +74,17 @@ static unsigned long __stdcall worker(void*) {
     const unsigned long hsz = nocrt::module_size(host);
     const unsigned char* hit = nocrt::scan(host, hsz, kHostFn);
     if (hit && nocrt::count_matches(host, hsz, kHostFn.b, kHostFn.n) == 1) {
-        // kHostFn matches the full 7-byte imul prologue, so stealing 7 bytes
-        // never splits an instruction.
-        nocrt::inline_hook h = {};
-        const bool ok = nocrt::hook_inline(h, (unsigned char*)hit, (void*)&detour_target, 7);
+        // Prologue probe decides the stolen length; RIP-relative or branch
+        // forms are refused outright.
+        nocrt::nocrt_hook h = {};
+        const bool ok = nocrt::hook_install(h, (unsigned char*)hit, (void*)&detour_target);
+        nocrt::out("[dbg] stolen: ", 12);
+        print_hex(h.stolen);
+        nocrt::out("\r\n", 2);
         nocrt::out("[dbg] hit: ", 10);
         print_hex((unsigned long long)hit);
         nocrt::out(" tramp: ", 8);
-        print_hex((unsigned long long)h.trampoline);
+        print_hex((unsigned long long)h.slot);
         nocrt::out(" ok: ", 5);
         print_hex(ok ? 1 : 0);
         nocrt::out("\r\n", 2);

@@ -145,4 +145,45 @@ inline bool register_own_unwind(unsigned long long image_base) {
     return raft((void*)(base + pdata_rva), pdata_size / 12, image_base) != 0;
 }
 
+// Pure-C stack pivot (spoof_call) via RtlCaptureContext/RtlRestoreContext:
+// no asm, no gadget hunt, no syscall. Refuses when shadow stacks are live or
+// enforced, because SetContextIpValidation validates the target IP of
+// RtlRestoreContext on CET-enforced processes.
+using pivot_fn1_t = long long (__cdecl*)(long long);
+
+inline void __cdecl pivot_landing(long long result) {
+    unsigned char* teb = (unsigned char*)__readgsqword(0x30);
+    unsigned char* saved = *(unsigned char**)(teb + 0x28);
+    if (saved) {
+        *(unsigned long long*)(saved + 0x78) = (unsigned long long)result;  // Rax
+        const auto res = (void(__cdecl*)(void*, void*))NOCRT_FN("RtlRestoreContext");
+        if (res) res(saved, nullptr);
+    }
+}
+
+inline bool pivot_call(pivot_fn1_t fn, long long arg, long long* out) {
+    const nocrt_caps c = probe_caps();
+    if (c.ssp_live || c.shadow_policy) return false;
+    const auto cap = (void(__cdecl*)(void*))NOCRT_FN("RtlCaptureContext");
+    const auto res = (void(__cdecl*)(void*, void*))NOCRT_FN("RtlRestoreContext");
+    if (!cap || !res) return false;
+    static unsigned char ctx[0x4D0 + 16];
+    static unsigned char fake[0x4D0 + 16];
+    cap(ctx);
+    unsigned char* teb = (unsigned char*)__readgsqword(0x30);
+    *(unsigned char**)(teb + 0x28) = ctx;  // ArbitraryUserPointer as context slot
+    memcpy(fake, ctx, sizeof(fake));
+    unsigned long long rsp = *(unsigned long long*)(fake + 0x98);
+    rsp = (rsp & ~15ull) - 0x28;
+    *(unsigned long long*)(fake + 0x98) = rsp;
+    *(unsigned long long*)(rsp) = (unsigned long long)&pivot_landing;
+    *(unsigned long long*)(fake + 0x78) = (unsigned long long)arg;  // Rcx
+    *(unsigned long long*)(fake + 0xF8) = (unsigned long long)fn;    // Rip
+    res(fake, nullptr);
+    // Resumed here by pivot_landing's restore; result landed in ctx.Rax.
+    if (out) *out = (long long)*(unsigned long long*)(ctx + 0x78);
+    *(unsigned char**)(teb + 0x28) = nullptr;
+    return true;
+}
+
 } // namespace nocrt
