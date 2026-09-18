@@ -49,11 +49,24 @@ The flags that make it freestanding:
 ## Layout
 
 ```
-include/nocrt/nocrt.h   freestanding primitives + minimal Win32 declarations
-src/nocrt.cpp           global memcpy/memset/memmove/memcmp/strlen/strcmp/strncmp
+include/nocrt/*.h       freestanding headers: core primitives, xstr/secstr
+                        (compile-time strings), lazy import + hostcrt,
+                        pattern scanner, PE mapping, hook engine, stack/CET,
+                        map/thread stealth helpers, trace ring, dll entry
+src/nocrt.cpp           global memcpy/memset/... + api table (zero-import mode)
 src/entry.cpp           nocrt_entry: calls nocrt_main, then ExitProcess
-src/demo.cpp            nocrt_main + self-test
-build.bat               vcvars64 + NoCRT compile + import-table dump
+tests/demo.cpp          nocrt_main + string/crypto self-tests
+tests/patscan           companion: patterns/addresses out of a parent binary,
+                        --crt cross-checks export-hash vs pattern-scan
+tests/host, tests/loadtest, tests/testdll, tests/inject
+                        live harness: CRT host, loader-mode host, zero-import
+                        DLL, manual mapper (--dump-log reads the trace ring)
+tests/stackwalk         frame-chain walk + unbacked-frame classification
+tests/cowtest           SEC_IMAGE/COW/VAD measurements
+tests/metrics           M-line machine-readable image metrics
+tools/strip, tools/inspect.ps1
+                        post-link metadata strip/pad + PE inspection
+build.bat               vcvars64 + NoCRT compile + assertions
 ```
 
 ## Model

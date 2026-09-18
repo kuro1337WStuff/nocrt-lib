@@ -24,17 +24,17 @@ set CFL=/nologo /O2 /W4 /Zl /Gw /Zc:inline /GS- /EHs-c- /GR- /std:c++latest /Iin
 set LKF=/OPT:REF,ICF /DEBUG:NONE /INCREMENTAL:NO /MANIFEST:NO ^
         /MERGE:.pdata=.rdata /MERGE:.rdata=.text
 
-cl %CFL% src\nocrt.cpp src\entry.cpp src\demo.cpp ^
+cl %CFL% src\nocrt.cpp src\entry.cpp tests\demo.cpp ^
    /Febuild\nocrt-demo.exe /link %LKF% /ENTRY:nocrt_entry /SUBSYSTEM:CONSOLE /NODEFAULTLIB kernel32.lib
 if errorlevel 1 exit /b 1
 build\strip.exe build\nocrt-demo.exe
 
-cl %CFL% src\nocrt.cpp src\entry.cpp tools\patscan\patscan.cpp ^
+cl %CFL% src\nocrt.cpp src\entry.cpp tests\patscan\patscan.cpp ^
    /Febuild\patscan.exe /link %LKF% /ENTRY:nocrt_entry /SUBSYSTEM:CONSOLE /NODEFAULTLIB kernel32.lib
 if errorlevel 1 exit /b 1
 build\strip.exe build\patscan.exe
 
-cl %CFL% /DNOCRT_ZERO_IMPORT=1 src\nocrt.cpp src\entry.cpp src\demo.cpp ^
+cl %CFL% /DNOCRT_ZERO_IMPORT=1 src\nocrt.cpp src\entry.cpp tests\demo.cpp ^
    /Febuild\nocrt-zero.exe /link %LKF% /ENTRY:nocrt_entry /SUBSYSTEM:CONSOLE /NODEFAULTLIB
 if errorlevel 1 exit /b 1
 build\strip.exe build\nocrt-zero.exe
@@ -44,7 +44,7 @@ rem NOTE: section merges are DISABLED for the DLL: merged images crash under
 rem our private manual mapper (fault inside mapped .text, root cause open -
 rem see FEATURES open questions). Merges stay on for disk-run images only.
 cl %CFL% /Ithird_party /DNOCRT_ZERO_IMPORT=1 src\nocrt.cpp third_party\hde\hde64.c ^
-   tools\testdll\testdll.cpp ^
+   tests\testdll\testdll.cpp ^
    /Febuild\testdll.dll /link /OPT:REF,ICF /DEBUG:NONE /INCREMENTAL:NO /MANIFEST:NO ^
    /DLL /ENTRY:NocrtDllEntry /SUBSYSTEM:WINDOWS /NODEFAULTLIB /FIXED:NO
 if errorlevel 1 exit /b 1
@@ -56,17 +56,17 @@ build\strip.exe build\testdll.dll
 rem Dev/test tools (CRT allowed; they never ship inside the target).
 rem /MD on host so the CRT is a loaded module (ucrtbase.dll) that the injected
 rem DLL can reach by export hash; a /MT host would hide the CRT inside itself.
-cl /nologo /O2 /MD tools\host\host.cpp /Febuild\host.exe
+cl /nologo /O2 /MD tests\host\host.cpp /Febuild\host.exe
 if errorlevel 1 exit /b 1
-cl /nologo /O2 tools\inject\inject.cpp /Febuild\inject.exe
+cl /nologo /O2 tests\inject\inject.cpp /Febuild\inject.exe
 if errorlevel 1 exit /b 1
-cl /nologo /O2 tools\stackwalk\stackwalk.cpp /Febuild\stackwalk.exe
+cl /nologo /O2 tests\stackwalk\stackwalk.cpp /Febuild\stackwalk.exe
 if errorlevel 1 exit /b 1
-cl /nologo /O2 tools\metrics\metrics.cpp /Febuild\metrics.exe
+cl /nologo /O2 tests\metrics\metrics.cpp /Febuild\metrics.exe
 if errorlevel 1 exit /b 1
-cl /nologo /O2 tools\cowtest\cowtest.cpp /Febuild\cowtest.exe
+cl /nologo /O2 tests\cowtest\cowtest.cpp /Febuild\cowtest.exe
 if errorlevel 1 exit /b 1
-cl /nologo /O2 /MD tools\loadtest\loadtest.cpp /Febuild\loadtest.exe
+cl /nologo /O2 /MD tests\loadtest\loadtest.cpp /Febuild\loadtest.exe
 if errorlevel 1 exit /b 1
 
 echo.
