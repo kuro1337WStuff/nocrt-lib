@@ -31,17 +31,6 @@ constexpr unsigned long kOpenExisting = 3;
 constexpr unsigned long kPageReadOnly = 0x02;
 constexpr unsigned long kFileMapRead = 0x0004;
 
-inline unsigned short rd16(const unsigned char* p) {
-    return (unsigned short)((unsigned short)p[0] | ((unsigned short)p[1] << 8));
-}
-inline unsigned long rd32(const unsigned char* p) {
-    return (unsigned long)p[0] | ((unsigned long)p[1] << 8) | ((unsigned long)p[2] << 16) |
-           ((unsigned long)p[3] << 24);
-}
-inline unsigned long long rd64(const unsigned char* p) {
-    return (unsigned long long)rd32(p) | ((unsigned long long)rd32(p + 4) << 32);
-}
-
 struct mapped_pe {
     const unsigned char* base = nullptr;
     nocrt_size size = 0;

@@ -28,6 +28,15 @@ and gotchas go in the notes so the vision survives across sessions.
       of a parent binary using only the library: scan a known pattern →
       file-off/RVA/VA, generate a signature at that address, verify uniqueness,
       re-scan to confirm the round trip.
+- [x] **Lazy import resolution (`include/nocrt/lazy.h`)** — PEB → LDR module
+      walk plus export-directory parse; function names matched by a constexpr
+      hash seeded per expansion site (`NOCRT_FN("WriteFile")`), so the baked
+      immediates are not a stable signature the way stock lazy-importer
+      headers are. Forwarded exports are detected and rejected.
+- [x] **Zero-import build mode (`NOCRT_ZERO_IMPORT=1`)** — every Win32 call
+      routed through the `nocrt::api()` table, filled on first use by lazy
+      resolution; links with no libraries at all and `dumpbin /imports` shows
+      an empty table.
 
 ## The string story (headline feature)
 
@@ -118,6 +127,10 @@ standard library, with no CRT linked. Candidate pieces, grouped:
 - Every feature ships with a self-test in `src/demo.cpp` and a checkbox here.
 - Compile-time work belongs in `constexpr`; runtime plaintext must be scoped
   and zeroed.
+- Zero-import stays opt-in (`NOCRT_ZERO_IMPORT`), not the default: an empty
+  import table is itself anomalous to some heuristics, so the kernel32-minimal
+  build remains the default profile. Lazy resolution is the capability; the
+  build mode is a policy choice per consumer.
 
 ## Verification log
 
@@ -128,3 +141,8 @@ standard library, with no CRT linked. Candidate pieces, grouped:
   banner pattern hit file-off `0x1258` / rva `0x2058` / va `0x140002058`;
   generated 16-byte signature unique (occurrences 1); re-scan resolved to the
   same address. Both images import `KERNEL32.dll` only.
+- 2026-09-18: lazy/zero-import verified — `nocrt-zero.exe` links with no
+  libraries, `dumpbin /imports` empty, and runs byte-identical output to the
+  kernel32-minimal demo (GetStdHandle/WriteFile/ExitProcess/GetCommandLineA
+  all resolved via the PEB walk). `patscan` PASS against the zero-import image
+  (hit rva `0x3078`).

@@ -12,16 +12,6 @@
 
 namespace nocrt {
 
-// murmur-style finalizer mix; constexpr so encryption is a compile-time act.
-constexpr unsigned long long xmix(unsigned long long s) {
-    s ^= s >> 33;
-    s *= 0xFF51AFD7ED558CCDull;
-    s ^= s >> 33;
-    s *= 0xC4CEB9FE1A85EC53ull;
-    s ^= s >> 33;
-    return s;
-}
-
 constexpr unsigned char xkey_byte(unsigned long long seed, nocrt_size i) {
     return (unsigned char)(xmix(seed + i * 0x9E3779B97F4A7C15ull) & 0xFF);
 }

@@ -1,5 +1,10 @@
 #include "nocrt/nocrt.h"
 
+// These names are MSVC intrinsics by default; #pragma function makes them
+// ordinary functions so we can define them and keep /Oi enabled elsewhere
+// (lazy.h needs __readgsqword).
+#pragma function(memset, memcpy, memmove, memcmp, strlen, strcmp)
+
 // Byte-wise implementations. Deliberately not intrinsics: these must exist
 // as real symbols so implicit compiler-emitted calls link with /NODEFAULTLIB.
 
@@ -55,3 +60,52 @@ extern "C" int __cdecl strncmp(const char* a, const char* b, nocrt_size n) {
     }
     return 0;
 }
+
+#ifndef NOCRT_ZERO_IMPORT
+#define NOCRT_ZERO_IMPORT 0
+#endif
+
+#if NOCRT_ZERO_IMPORT
+#include "nocrt/lazy.h"
+#endif
+
+namespace nocrt {
+namespace {
+
+api_table g_api;
+bool g_api_ready = false;
+
+api_table make_api() {
+    api_table t = {};
+#if NOCRT_ZERO_IMPORT
+    constexpr unsigned long long seed = 0xA5A5C3C35A5A3C3Cull;
+    t.get_std_handle = (decltype(t.get_std_handle))lazy_resolve(
+        str_hash("GetStdHandle", seed), seed);
+    t.write_file = (decltype(t.write_file))lazy_resolve(
+        str_hash("WriteFile", seed), seed);
+    t.exit_process = (decltype(t.exit_process))lazy_resolve(
+        str_hash("ExitProcess", seed), seed);
+    t.get_command_line_a = (decltype(t.get_command_line_a))lazy_resolve(
+        str_hash("GetCommandLineA", seed), seed);
+#else
+    t.get_std_handle = GetStdHandle;
+    t.write_file = WriteFile;
+    t.exit_process = ExitProcess;
+    t.get_command_line_a = GetCommandLineA;
+#endif
+    return t;
+}
+
+} // namespace
+
+// No CRT startup exists, so this cannot rely on static initializers: the
+// table lives in .bss and is filled on first use.
+api_table& api() {
+    if (!g_api_ready) {
+        g_api = make_api();
+        g_api_ready = true;
+    }
+    return g_api;
+}
+
+} // namespace nocrt

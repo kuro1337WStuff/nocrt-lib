@@ -36,25 +36,59 @@ int __cdecl strncmp(const char* a, const char* b, nocrt_size n);
 
 namespace nocrt {
 
+// Little-endian byte readers; the PE and lazy-import walkers build on these.
+inline unsigned short rd16(const unsigned char* p) {
+    return (unsigned short)((unsigned short)p[0] | ((unsigned short)p[1] << 8));
+}
+inline unsigned long rd32(const unsigned char* p) {
+    return (unsigned long)p[0] | ((unsigned long)p[1] << 8) | ((unsigned long)p[2] << 16) |
+           ((unsigned long)p[3] << 24);
+}
+inline unsigned long long rd64(const unsigned char* p) {
+    return (unsigned long long)rd32(p) | ((unsigned long long)rd32(p + 4) << 32);
+}
+
+// murmur-style finalizer mix; constexpr so callers can fold it at compile time.
+constexpr unsigned long long xmix(unsigned long long s) {
+    s ^= s >> 33;
+    s *= 0xFF51AFD7ED558CCDull;
+    s ^= s >> 33;
+    s *= 0xC4CEB9FE1A85EC53ull;
+    s ^= s >> 33;
+    return s;
+}
+
+// Every Win32 call goes through this table. In the default build it is filled
+// from the static kernel32 imports; with NOCRT_ZERO_IMPORT=1 it is filled by
+// lazy PEB/export resolution, so the image carries no import table at all.
+struct api_table {
+    nocrt_handle(__stdcall* get_std_handle)(nocrt_dword);
+    nocrt_dword(__stdcall* write_file)(nocrt_handle, const void*, nocrt_dword, nocrt_dword*, void*);
+    void(__stdcall* exit_process)(nocrt_dword);
+    char*(__stdcall* get_command_line_a)();
+};
+
+api_table& api();
+
 inline bool write(nocrt_handle file, const char* data, nocrt_size n) {
     nocrt_dword written = 0;
-    return WriteFile(file, data, (nocrt_dword)n, &written, nullptr) != 0;
+    return api().write_file(file, data, (nocrt_dword)n, &written, nullptr) != 0;
 }
 
 inline bool out(const char* data, nocrt_size n) {
-    return write(GetStdHandle(NOCRT_STD_OUTPUT_HANDLE), data, n);
+    return write(api().get_std_handle(NOCRT_STD_OUTPUT_HANDLE), data, n);
 }
 
 inline bool out(const char* data) { return out(data, strlen(data)); }
 
 inline bool err(const char* data, nocrt_size n) {
-    return write(GetStdHandle(NOCRT_STD_ERROR_HANDLE), data, n);
+    return write(api().get_std_handle(NOCRT_STD_ERROR_HANDLE), data, n);
 }
 
 inline bool err(const char* data) { return err(data, strlen(data)); }
 
 // Command line without CRT startup: read the raw process command line.
-inline const char* cmdline() { return GetCommandLineA(); }
+inline const char* cmdline() { return api().get_command_line_a(); }
 
 // Copies the n-th whitespace-separated token (0 = image path) into out.
 // Quoted tokens are unwrapped. Returns the copied length, 0 if absent.
